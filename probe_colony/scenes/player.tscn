@@ -1,16 +1,18 @@
 [gd_scene format=3 uid="uid://dbj1f08idxnxu"]
 
 [ext_resource type="Script" uid="uid://ccwqokxh1vyc4" path="res://scripts/player.gd" id="1_g2els"]
+[ext_resource type="Script" path="res://scripts/miner.gd" id="3_miner"]
+[ext_resource type="Script" path="res://scripts/hotbar.gd" id="4_hotbar"]
 [ext_resource type="Texture2D" uid="uid://odsukiufbnjr" path="res://assets/Sprite_RV1.png" id="2_qhqgy"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_player"]
-size = Vector2(160, 160)
+size = Vector2(111, 115)
 
 [node name="Player" type="CharacterBody2D" unique_id=1906643731]
 script = ExtResource("1_g2els")
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=1479478285]
-position = Vector2(-2, 4)
+position = Vector2(-2.5, 26.5)
 shape = SubResource("RectangleShape2D_player")
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=379020466]
@@ -19,3 +21,9 @@ texture = ExtResource("2_qhqgy")
 
 [node name="Camera2D" type="Camera2D" parent="." unique_id=385524197]
 position = Vector2(0, -24)
+
+[node name="Miner" type="Node2D" parent="."]
+script = ExtResource("3_miner")
+
+[node name="Hotbar" type="CanvasLayer" parent="."]
+script = ExtResource("4_hotbar")
