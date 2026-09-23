@@ -28,7 +28,8 @@ var gravel: Dictionary = {}
 
 ## Fake physics: falls under gravity and lands on the first solid tile below.
 ## (Named fall_gravity because Area2D already has a built-in "gravity".)
-@export var fall_gravity: float = 1200.0
+## Comes from units.gd so pebbles fall at the same rate the player does.
+@export var fall_gravity: float = Units.GRAVITY_PX
 @export var drop_scale: float = 0.3    # 40px tile -> 12px drop
 
 ## Sideways slowdown, in "fraction of speed lost per second". Without it a

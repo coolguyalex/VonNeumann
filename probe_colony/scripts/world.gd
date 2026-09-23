@@ -39,8 +39,9 @@ const NO_TARGET := TileRaycast.NO_TARGET
 # here, because it is really a tuning number: it and the player's cargo_capacity
 # together decide how many tiles you can dig before you have to stop.
 
-## Units of gravel one mined tile is worth. At 10, a 150-unit hold takes 15 tiles.
-@export var gravel_per_tile: float = 10.0
+## Litres of gravel one mined tile is worth. A tile is half a metre cubed, so
+## 0.125 m³ = 125 litres of rock. At that rate a 1500 L hold takes 12 tiles.
+@export var gravel_per_tile: float = 125.0
 
 ## How many pebbles one tile breaks into. They share the tile's gravel evenly,
 ## so this is a looks-and-feel number, not an economy one.

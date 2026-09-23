@@ -1,6 +1,7 @@
 extends CharacterBody2D
 ## Player: the machine you control.
-##   - Move with A/D, jump with W (a side-view platformer).
+##   - Move with A/D. Hold W to fire the jetpack -- there is no jump, and if you
+##     are carrying too much the jetpack simply won't lift you.
 ##   - 1-9, 0 select a hotbar slot. Whatever is selected is your "active item".
 ##   - Hold Space to USE the active item:  drill = mine, magnet = pull drops.
 ##     Items with no function do nothing yet.
@@ -22,10 +23,45 @@ extends CharacterBody2D
 ## hotbar_1..hotbar_10, move_*). This file never mentions a specific key, so a
 ## future keybinding menu only has to reassign those actions.
 
-# --- Movement settings (adjustable in the Inspector) -------------------------
-@export var speed: float = 400.0          # sideways speed, pixels/second
-@export var jump_velocity: float = -600.0 # negative = up. Bigger number = higher jump
-@export var gravity: float = 1200.0       # downward pull, pixels/second squared
+# --- Mass ---------------------------------------------------------------------
+# Everything below is in REAL units: kilograms, newtons, metres, seconds. The
+# conversion to pixels happens in units.gd and nowhere else.
+#
+# Mass is what ties the cargo hold to how the machine handles. The rover's own
+# weight is fixed; what you are carrying is not, so a full hold is felt in the
+# controls rather than just read off a meter.
+
+## The machine's own weight with nothing in the hold, in kilograms. A 1.4m
+## working robot, so about the weight of a small excavator. Parts will
+## contribute to this once the chassis/module system exists.
+@export var dry_mass: float = 1200.0
+
+# --- Drive ---------------------------------------------------------------------
+## What the motors can push with, in newtons. Acceleration is force / mass, so
+## this number stays put while a filling hold makes you slower and slower.
+@export var motor_force: float = 10000.0
+
+## Top speed on the flat, metres/second. Not mass-dependent: a heavy rover takes
+## much longer to GET here, but it gets here eventually.
+@export var max_speed: float = 5.0
+
+## Braking, m/s². Deliberately NOT divided by mass: these are real brakes, not
+## friction, so a loaded rover feels sluggish to start and never slippery to
+## stop. Skidding around under a full load is the failure mode to avoid.
+@export var brake_decel: float = 12.0
+
+## How much of the motor you can use in mid-air, 0 to 1.
+@export var air_control: float = 0.3
+
+# --- Jetpack -------------------------------------------------------------------
+## Thrust in newtons. THIS IS THE INTERESTING NUMBER: if it can't beat your own
+## weight (mass × gravity) you simply do not leave the ground. At 13500N a full
+## hold of regolith still just barely lifts, while a full hold of hematite --
+## three times denser -- pins you down until you dump some of it.
+@export var jetpack_thrust: float = 13500.0
+
+## Climb rate cap, metres/second, so an empty rover doesn't rocket off-screen.
+@export var jetpack_max_climb: float = 8.0
 
 # --- Magnet (pulls nearby drops toward you while it is active) ---------------
 # The pull on a drop is:  magnet_strength * (1/d^2 - 1/magnet_range^2)
@@ -33,8 +69,9 @@ extends CharacterBody2D
 # magnet_range. Drops read these numbers from us every tick (see
 # dropped_item.gd), so a future magnet/suction upgrade only has to change them.
 ## Bigger = stronger pull. Units are pixels^3 / second^2 (a pull in px/s^2 times d^2).
-## Tier 1 value (raised from 1.5e7, which felt too weak); upgrades raise it.
-@export var magnet_strength: float = 25000000.0
+## Divided by ~4 when the world was rescaled to Mars gravity: the pull is an
+## acceleration, so against weaker gravity the old value felt four times stronger.
+@export var magnet_strength: float = 6200000.0
 ## Beyond this many pixels there is no pull at all.
 @export var magnet_range: float = 300.0
 
@@ -47,10 +84,11 @@ extends CharacterBody2D
 @export var throw_pickup_delay: float = 1.5
 
 # --- Cargo hold --------------------------------------------------------------
-## Units of material the hold takes, counting every material together. This is
-## the Tier 0 hold: deliberately small, so you have to stop and think about the
-## trip back. A bigger cargo module raises it.
-@export var cargo_capacity: float = 150.0
+## Litres the hold takes, counting every material together. One mined tile is
+## 125 litres of gravel, so 1500 is a dozen tiles: enough to feel productive,
+## small enough that the trip home is a real decision. A bigger cargo module
+## raises it -- and makes it much easier to load yourself past liftoff weight.
+@export var cargo_capacity: float = 1500.0
 
 # --- State -------------------------------------------------------------------
 ## The tools we're carrying, one per hotbar slot (data only).
@@ -81,7 +119,7 @@ func _ready() -> void:
 
 	# Connect the two on-screen displays and the drill to us.
 	_hotbar.setup(inventory)
-	_cargo_meter.setup(cargo)
+	_cargo_meter.setup(cargo, self)
 	_miner.setup(self)
 
 	# Starting kit: the drill and the magnet take the first two slots.
@@ -92,21 +130,70 @@ func _ready() -> void:
 # Runs every physics tick (60 times a second by default). `delta` is the time
 # since the last tick, so `something * delta` means "per second" amounts.
 func _physics_process(delta: float) -> void:
-	# Gravity: pull down whenever we're not standing on something.
-	if not is_on_floor():
-		velocity.y += gravity * delta
+	# Worked out once and passed down, because every line below divides by it.
+	var mass: float = total_mass()
 
-	# Jump, but only from the ground (no mid-air jumps).
-	if Input.is_action_just_pressed("move_up") and is_on_floor():
-		velocity.y = jump_velocity
-
-	# get_axis returns -1 (left), 0 (none) or +1 (right).
-	velocity.x = Input.get_axis("move_left", "move_right") * speed
+	_apply_vertical(delta, mass)
+	_apply_drive(delta, mass)
 
 	# Applies velocity, sliding along walls/floors and handling collisions.
 	move_and_slide()
 
 	_update_active_item(delta)
+
+
+# ---------------------------------------------------------------------------
+# Movement
+# ---------------------------------------------------------------------------
+
+# Gravity pulls down, the jetpack pushes up, and whichever wins decides what
+# happens. There is no "can I jump?" check anywhere: if the thrust can't beat
+# the weight, the sum simply comes out downward and you stay on the floor.
+func _apply_vertical(delta: float, mass: float) -> void:
+	var thrust_accel := 0.0
+	if Input.is_action_pressed("move_up"):
+		# force / mass is an acceleration in m/s²; convert once to pixels.
+		thrust_accel = Units.accel_to_px(jetpack_thrust / mass)
+
+	# Positive = still falling on balance, negative = climbing.
+	var net: float = Units.GRAVITY_PX - thrust_accel
+
+	if is_on_floor() and net >= 0.0:
+		# Planted: too heavy to lift, or not trying to. Keep ONE frame's worth of
+		# weight pressing downward rather than zeroing it. A body with exactly
+		# zero vertical speed never collides with the ground it is resting on, so
+		# is_on_floor() starts flickering and the rover gets air control (and its
+		# reduced acceleration) while standing still.
+		velocity.y = net * delta
+	else:
+		velocity.y += net * delta
+
+	# Cap the climb so an empty rover doesn't disappear upward.
+	velocity.y = maxf(velocity.y, -Units.m_to_px(jetpack_max_climb))
+
+
+# Sideways movement is a FORCE, so acceleration is force / mass. This is where a
+# full hold is actually felt: the top speed is the same, getting there is not.
+func _apply_drive(delta: float, mass: float) -> void:
+	# get_axis returns -1 (left), 0 (none) or +1 (right).
+	var dir: float = Input.get_axis("move_left", "move_right")
+	var brake_step: float = Units.m_to_px(brake_decel) * delta
+
+	if is_zero_approx(dir):
+		velocity.x = move_toward(velocity.x, 0.0, brake_step)
+		return
+
+	# Turning around brakes first rather than fighting momentum with the motor,
+	# so a heavy rover can still change direction promptly.
+	if velocity.x * dir < 0.0:
+		velocity.x = move_toward(velocity.x, 0.0, brake_step)
+
+	var accel: float = Units.accel_to_px(motor_force / mass)
+	if not is_on_floor():
+		accel *= air_control
+
+	var limit: float = Units.m_to_px(max_speed)
+	velocity.x = clampf(velocity.x + dir * accel * delta, -limit, limit)
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +250,27 @@ func _throw_selected_item() -> void:
 		start = global_position
 
 	_world.spawn_drop(start, item_id, _world.item_icon(item_id), dir * throw_speed, throw_pickup_delay)
+
+
+# ---------------------------------------------------------------------------
+# Mass
+# ---------------------------------------------------------------------------
+
+## What this machine weighs right now, in kilograms: itself plus its load.
+func total_mass() -> float:
+	return dry_mass + cargo.mass()
+
+
+## Can the jetpack beat our own weight at the moment? The movement code doesn't
+## consult this -- the physics works it out by itself -- but the cargo meter
+## warns the player with it, which beats finding out at the bottom of a pit.
+func can_lift() -> bool:
+	return jetpack_thrust > total_mass() * Units.GRAVITY_MS2
+
+
+## The heaviest we could be and still take off, in kilograms.
+func lift_limit() -> float:
+	return jetpack_thrust / Units.GRAVITY_MS2
 
 
 ## Tries to pick up one whole item into a hotbar slot. Returns true if it fit,
