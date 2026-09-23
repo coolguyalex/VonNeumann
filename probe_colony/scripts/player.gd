@@ -6,6 +6,8 @@ extends CharacterBody2D
 ##   - Hold Space to USE the active item:  drill = mine, magnet = pull drops.
 ##     Items with no function do nothing yet.
 ##   - Q throws the selected item out into the world.
+##   - Hold G to pour the cargo hold back out onto the ground, which is how you
+##     get out from under a load too heavy to lift.
 ##
 ## You carry things in TWO separate places, and they never mix:
 ##   the hotbar (inventory.gd) - 10 slots, one TOOL or item each
@@ -97,6 +99,26 @@ var fuel: float = 0.0
 ## Seconds before a thrown item can be picked up or magnetised again.
 @export var throw_pickup_delay: float = 1.5
 
+# --- Dumping the hold ---------------------------------------------------------
+# Hold the dump key to pour gravel back out onto the ground. This is the way out
+# of the trap the mass system otherwise sets: loaded past liftoff weight at the
+# bottom of a hole, with no way to shed anything. It is also the physical half
+# of rover-to-rover transfer later -- one machine pours, another sucks it up.
+
+## Litres per second poured out while the key is held. A full hold empties in
+## under four seconds: fast enough to be an escape, slow enough to stop early.
+@export var dump_rate: float = 400.0
+
+## Gravel leaves the hold in pebbles of roughly this size.
+@export var dump_pebble_liters: float = 45.0
+
+## Seconds before dumped gravel can be sucked back up. Without this, dumping
+## with the suction running would just pull it all straight back in.
+@export var dump_pickup_delay: float = 2.0
+
+# Litres poured so far that haven't yet added up to a whole pebble.
+var _dump_pending: float = 0.0
+
 # --- Cargo hold --------------------------------------------------------------
 ## Litres the hold takes, counting every material together. One mined tile is
 ## 125 litres of gravel, so 1500 is a dozen tiles: enough to feel productive,
@@ -155,6 +177,7 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 
 	_update_active_item(delta)
+	_pour_out_cargo(delta)
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +259,15 @@ func _update_active_item(delta: float) -> void:
 	_miner.tick(delta, active_item == "drill", using)
 
 
+# Finds the World the first time it's needed and remembers it. Can't be done in
+# _ready() (same reason as in miner.gd): the World joins the "world" group in
+# ITS _ready(), which runs after ours. Returns false if it isn't there yet.
+func _find_world() -> bool:
+	if _world == null:
+		_world = get_tree().get_first_node_in_group("world")
+	return _world != null
+
+
 # ---------------------------------------------------------------------------
 # Throwing
 # ---------------------------------------------------------------------------
@@ -248,11 +280,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 # Removes the selected item from the inventory and tosses it toward the mouse.
 func _throw_selected_item() -> void:
-	# Find the World if we haven't yet (same reason as in miner.gd).
-	if _world == null:
-		_world = get_tree().get_first_node_in_group("world")
-		if _world == null:
-			return
+	if not _find_world():
+		return
 
 	# Take the item out of the selected slot. Empty slot -> nothing happens.
 	var item_id: String = inventory.take_item(inventory.selected)
@@ -271,6 +300,53 @@ func _throw_selected_item() -> void:
 		start = global_position
 
 	_world.spawn_drop(start, item_id, _world.item_icon(item_id), dir * throw_speed, throw_pickup_delay)
+
+
+# ---------------------------------------------------------------------------
+# Dumping the hold
+# ---------------------------------------------------------------------------
+
+# While the dump key is held, pour gravel out onto the ground a pebble at a
+# time. Volume is taken proportionally from every material (see
+# cargo.take_mixture), so what lands is a scoop of what you were carrying
+# rather than whichever material happened to be listed first.
+func _pour_out_cargo(delta: float) -> void:
+	if not Input.is_action_pressed("dump_cargo") or cargo.total() <= 0.0:
+		_dump_pending = 0.0
+		return
+	if not _find_world():
+		return
+
+	_dump_pending += dump_rate * delta
+	while _dump_pending >= dump_pebble_liters and cargo.total() > 0.0:
+		_dump_pending -= dump_pebble_liters
+		_spill_one_pebble()
+
+
+# Takes one pebble's worth out of the hold and tosses it clear of our tracks.
+func _spill_one_pebble() -> void:
+	var mixture: Dictionary = cargo.take_mixture(dump_pebble_liters)
+	if mixture.is_empty():
+		return
+
+	# The pebble wears the colour of whatever it is mostly made of. Material out
+	# of a tank has no tile to borrow a picture from, so one is generated.
+	var main_material := ""
+	var most := 0.0
+	for material_id in mixture:
+		if mixture[material_id] > most:
+			most = mixture[material_id]
+			main_material = material_id
+
+	# Throw it out to one side so a dumped load doesn't pile up underneath us
+	# (and immediately get driven over). Sideways if we're moving, else right.
+	var side: float = signf(velocity.x) if not is_zero_approx(velocity.x) else 1.0
+	var start: Vector2 = global_position + Vector2(side * Units.m_to_px(0.7), Units.m_to_px(0.3))
+	var toss := Vector2(side * randf_range(Units.m_to_px(0.5), Units.m_to_px(1.6)),
+		-randf_range(0.0, Units.m_to_px(1.0)))
+
+	_world.spawn_drop(start, "", MaterialTable.gravel_texture(main_material),
+		toss, dump_pickup_delay, mixture)
 
 
 # ---------------------------------------------------------------------------

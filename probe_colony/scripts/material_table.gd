@@ -82,6 +82,37 @@ static func density(material_id: String) -> float:
 	return DENSITIES.get(material_id, UNKNOWN_DENSITY)
 
 
+# Generated gravel pictures, one per material, built on first use.
+static var _gravel_textures: Dictionary = {}
+
+
+## A stand-in tile picture for gravel that did not come from a tile.
+##
+## Mined pebbles wear a shrunken copy of the rock they came out of, but material
+## poured back OUT of a hold has no rock to borrow from -- it has been sitting in
+## a tank. So each material gets its own speckled square in its own colour,
+## generated once and reused. The speckle is seeded from the material's name, so
+## the same material always looks the same between runs.
+static func gravel_texture(material_id: String) -> Texture2D:
+	if _gravel_textures.has(material_id):
+		return _gravel_textures[material_id]
+
+	const SIZE := 40  # matches the tile size, so it scales like a mined pebble
+	var base: Color = color(material_id)
+	var image := Image.create(SIZE, SIZE, false, Image.FORMAT_RGBA8)
+	image.fill(base.darkened(0.3))
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(material_id)
+	for i in 110:
+		image.set_pixel(rng.randi_range(0, SIZE - 1), rng.randi_range(0, SIZE - 1),
+			base.lightened(rng.randf_range(0.0, 0.5)))
+
+	var texture := ImageTexture.create_from_image(image)
+	_gravel_textures[material_id] = texture
+	return texture
+
+
 ## "hematite" -> "Hematite". Godot's capitalize() also turns "raw_copper" into
 ## "Raw Copper", so ids never need a second table just to be readable.
 static func display_name(material_id: String) -> String:

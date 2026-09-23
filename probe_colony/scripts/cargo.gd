@@ -124,6 +124,35 @@ func take(material_id: String, litres: float) -> float:
 	return removed
 
 
+## Removes `litres` of material and returns what came out. The mirror of
+## add_mixture: it takes proportionally from EVERYTHING in the hold, so pouring
+## some of a mixed load out gives you a scoop of that mixture rather than
+## whichever material happened to be first in the dictionary.
+func take_mixture(litres: float) -> Dictionary:
+	var held: float = total()
+	if held <= MIN_LITRES or litres <= MIN_LITRES:
+		return {}
+
+	var fraction: float = minf(litres / held, 1.0)
+	var out := {}
+
+	for material_id in amounts.keys():
+		var taken: float = amounts[material_id] * fraction
+		if taken <= MIN_LITRES:
+			continue
+		out[material_id] = taken
+
+		var left: float = amounts[material_id] - taken
+		if left <= MIN_LITRES:
+			amounts.erase(material_id)  # don't leave rounding dust behind
+		else:
+			amounts[material_id] = left
+
+	if not out.is_empty():
+		changed.emit()
+	return out
+
+
 ## The materials we hold, in a STABLE draw order: regolith first (it is the bulk,
 ## so it sits at the bottom of the tank), then everything else alphabetically.
 ## Without a fixed order the bands in the meter would shuffle on every pickup.
