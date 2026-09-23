@@ -10,8 +10,10 @@ extends Node2D
 ## The settings below are exported, so you can tweak them in the Inspector (click
 ## the Miner node under Player). A future drill upgrade would change them.
 
-## How far you can reach, in pixels.
-@export var mine_reach: float = 480.0
+## How far you can reach, in METRES. The rover's body is 1.39m long, so 2.8 is
+## about two body lengths -- an arm you could believe is bolted to the front,
+## rather than the six metres this used to be at the new scale.
+@export var mine_reach: float = 2.8
 ## Seconds of holding the button to break one tile.
 @export var mine_time: float = 1.0
 
@@ -21,10 +23,17 @@ var _target: Vector2i = Vector2i.ZERO   # grid cell currently aimed at
 var _has_target: bool = false           # is _target valid this tick?
 var _progress: float = 0.0              # seconds spent on the current target
 
+# The grit thrown off while we're biting. One emitter, switched on and off,
+# rather than a new one every frame.
+var _grit: CPUParticles2D = null
+var _grit_cell: Vector2i = Vector2i.ZERO  # which tile _grit is currently coloured for
+
 
 ## The player calls this once at startup.
 func setup(player: Node2D) -> void:
 	_player = player
+	_grit = MiningParticles.make_trickle()
+	add_child(_grit)
 
 
 ## Called by the player every physics tick.
@@ -46,7 +55,8 @@ func tick(delta: float, drill_selected: bool, using: bool) -> void:
 	if drill_selected:
 		# Shoot a line from the player toward the mouse; the first tile it hits
 		# is the target.
-		var cell: Vector2i = _world.raycast_tile(_player.global_position, get_global_mouse_position(), mine_reach)
+		var cell: Vector2i = _world.raycast_tile(_player.global_position, get_global_mouse_position(),
+			Units.m_to_px(mine_reach))
 		_has_target = cell != _world.NO_TARGET
 		_target = cell if _has_target else Vector2i.ZERO
 	else:
@@ -60,15 +70,36 @@ func tick(delta: float, drill_selected: bool, using: bool) -> void:
 
 	# Keep mining: add time, and break the tile once we've held long enough.
 	# (Unminable tiles, like bedrock, never accumulate progress.)
-	if using and _has_target and _world.is_minable(_target):
+	var biting: bool = using and _has_target and _world.is_minable(_target)
+	if biting:
 		_progress += delta
 		if _progress >= mine_time:
 			_world.mine_tile(_target)
 			_progress = 0.0
+			biting = false  # the tile is gone; its burst takes over from here
+
+	_update_grit(biting)
 
 	# Only redraw the outline when the target actually changed.
 	if _has_target != had_target or _target != old_target:
 		queue_redraw()
+
+
+# Parks the grit emitter on the tile being drilled and switches it on, or off
+# when we aren't biting. The colour is only looked up when the target actually
+# changes, since sampling a tile's colour is much dearer than moving a node.
+func _update_grit(biting: bool) -> void:
+	if _grit == null:
+		return
+
+	_grit.emitting = biting
+	if not biting:
+		return
+
+	_grit.global_position = _world.grid_to_world(_target)
+	if _target != _grit_cell:
+		_grit_cell = _target
+		MiningParticles.tint(_grit, _world.tile_color(_target))
 
 
 # Draws the outline around the targeted tile. Godot calls this when we request it

@@ -34,7 +34,14 @@ func setup(inventory: Inventory) -> void:
 	_build_slots()
 	# Whenever the inventory data changes, redraw.
 	_inventory.changed.connect(_refresh)
-	_refresh()
+
+	# DEFERRED on purpose. Icons come from the World, which joins the "world"
+	# group in its own _ready() -- and a parent's _ready() runs AFTER its
+	# children's, so during our setup the World cannot be found yet and every
+	# icon would resolve to null. Deferring puts this first draw after the whole
+	# tree is ready. (Without it the slots looked empty until you pressed a
+	# number key, because only the next inventory change redrew them.)
+	_refresh.call_deferred()
 
 
 # ---------------------------------------------------------------------------
