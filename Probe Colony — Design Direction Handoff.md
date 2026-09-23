@@ -15,10 +15,11 @@ This revision **reverses the central premise of the 2026-09-20 revision.** That 
 - **Belts are un-demoted.** In a game about abandoning places, a belt being a sunk cost is the point, not a problem.
 - **There is a mission.** You are surveying the planet for the site where the colony ship should land. Moving is the job, not a punishment.
 - **There is an identity.** You are the mission AI. Rover 0 is your current chassis, not your only one.
-- **Physics is real.** Mass, thrust and density now drive movement. 1 tile = 1 metre, gravity is Mars-like. A full hold can physically ground you. (New section: *Physics, mass & scale*.)
+- **Physics is real.** Mass, thrust and density now drive movement. 1 tile = half a metre, gravity is Mars-like. A full hold can physically ground you. (New section: *Physics, mass & scale*.) **Built and verified 2026-09-22.**
 - **Impurity is a system.** Recipes have ideal compositions; straying from them degrades the part. (New section: *Crafting, refining & impurity*.)
 - **The scripting layer is text, not blocks.** The 7 Billion Humans drag-and-drop model is dropped in favour of a small Python-like language with an Arduino-style `setup()`/`loop()` structure. (Rewritten section: *Programming/scripting layer*.)
-- **The cargo hold is built.** Gravel, compositions and the cargo meter are in the prototype as of today.
+- **Damage is per-part, and fuel is its own resource.** Parts each carry a condition that degrades before it fails; the jetpack burns manufactured reaction mass rather than charge, because a rocket is the only thing that works in a thin atmosphere. (New section: *Damage, wear & fuel*.)
+- **The cargo hold is built.** Gravel, compositions and the cargo meter are in the prototype as of today, along with the mass system and mining particles.
 
 ## Premise, mission & identity
 
@@ -53,9 +54,10 @@ Why this premise is load-bearing:
 
 Survival is reframed as machine maintenance rather than hunger/thirst:
 
-- **Charge** — core resource, drains over time and with activity. Now also scales with **mass**: hauling a heavy load costs more energy. First stat, not yet built.
-- **Lubricant** — second currency, added later
-- **Part wear/breakage** — parts degrade over time; this is the mechanic that eventually makes automation *necessary* rather than just efficient. It also gives every rover a running cost, which naturally limits how far the colony can scale by just building more rovers.
+- **Charge** — electrical, drains over time and with activity, recharged by sunlight. Now also scales with **mass**: hauling a heavy load costs more energy. First stat, not yet built.
+- **Fuel** — reaction mass for the jetpack, manufactured rather than recharged. See *Damage, wear & fuel*.
+- **Lubricant** — third currency, added later
+- **Part wear/breakage** — parts degrade with use, per part; this is the mechanic that eventually makes automation *necessary* rather than just efficient. It also gives every rover a running cost, which naturally limits how far the colony can scale by just building more rovers.
 
 ## Why the colony moves on
 
@@ -100,29 +102,79 @@ ground accel  = motor_force / mass
 jetpack accel = thrust / mass − g
 ```
 
-**[Decided] Scale and gravity.** 1 tile = **1 metre** (40 px), gravity is Mars-like at **3.71 m/s²** = 148 px/s². The existing player sprite works out to 2.8 × 2.9 m, almost exactly Curiosity's footprint, so the scale is honest.
+**[Decided] Scale and gravity.** 1 tile = **half a metre** (40 px, so 80 px to the metre), gravity is Mars-like at **3.71 m/s²** = 296.8 px/s².
 
-**The liftoff rule is the payoff.** If `thrust < mass × g` you simply cannot take off. Working numbers [Leaning]: a 500 kg Tier-0 rover, a 150 L hold, a 3000 N jetpack.
+The half-metre tile is not arbitrary — it is forced by the mass system. At 1 m a tile is a cubic metre, which is **1.5 tonnes of regolith**: more than the whole rover, and a hold big enough to be fun would need a 40-tonne mining truck to carry it. At half a metre a tile is 125 L (~190 kg), the player sprite works out to a believable 1.4 m working machine, and a hold still takes a dozen tiles. The gameplay payoff comes from the density *ratios*, so nothing is lost by choosing the absolute scale that keeps the pacing.
 
-| load | total mass | thrust needed | result |
-|---|---|---|---|
-| empty | 500 kg | 1855 N | climbs well (net 2.3 m/s²) |
-| 150 L regolith | 725 kg | 2690 N | just barely lifts (net 0.43 m/s²) |
-| 150 L hematite | 1295 kg | 4805 N | **grounded** |
+**The liftoff rule is the payoff.** If `thrust < mass × g` you simply cannot take off. Shipped numbers: a **1200 kg** rover, a **1500 L** hold, a **13,500 N** jetpack.
 
-Maximum liftable mass is 808 kg, so a full hold of regolith still flies but only about 58 L of hematite does — roughly a third of a tank. **The worthless bulk is light; the valuable ore is what pins you to the floor.** "Dump the gravel to fly out of this pit" becomes a decision made with your thumb, not a menu.
+| load | total mass | result |
+|---|---|---|
+| empty | 1.20 t | climbs well (net 7.5 m/s²) |
+| 1500 L regolith | 3.45 t | just barely lifts (net 0.2 m/s²) |
+| 1500 L hematite | 9.15 t | **grounded** |
+
+Maximum liftable mass is **3.64 t**, so a full hold of regolith still flies but only about 460 L of hematite does — 31% of the tank. **The worthless bulk is light; the valuable ore is what pins you to the floor.** "Dump the gravel to fly out of this pit" becomes a decision made with your thumb, not a menu.
+
+Sideways movement is a force too, so the same mass drives handling: empty, the rover reaches its 5 m/s top speed in 0.60 s (exactly what 10,000 N / 1200 kg predicts); fully loaded with ore it takes ten times as long. Top speed itself is unchanged by load — a heavy rover gets there eventually, it just takes forever.
+
+**[Idea] This is the argument for a hauler companion.** Once ore is heavy, the reason to build rover #1 stops being abstract throughput and becomes physical: you are grounded, and the ore still has to get home. A dedicated hauler carries no drill and no sensors, so it is lighter and carries more per trip — **mass makes specialization mathematically optimal, not merely thematic.** The shuttle loop (follow, take the load, run it back, return) is also the natural second program after "follow me".
 
 This also gives the **selective magnet** a real cost as well as a benefit: filtering for ore maximises value per trip and grounds you fastest.
 
 **[Decided] Realism stops at feel.** Mass bites hard on acceleration and jetpack thrust, but ground braking stays generous, so being heavy feels *sluggish* rather than *slippery*. Ice-skating physics is the failure mode to avoid.
 
-**Retuning the existing prototype.** The rescale invalidates several current numbers:
+**Retuning the existing prototype — done.** The rescale invalidated several numbers, all since corrected:
 
-- Gravity 1200 → 148, on both the player and dropped items.
-- The jump impulse (`jump_velocity = -600`) gives a 30 m leap under the new gravity. It should stop being an impulse and become jetpack thrust.
-- Suction pull is an acceleration, so with gravity 8× weaker it feels ~8× stronger; `magnet_strength` needs dividing by roughly that.
-- `throw_speed` of 600 px/s is 15 m/s and will sail a long way in low gravity.
-- **[Question]** Drill reach is 480 px, which is now **12 metres** — a lot of arm for a 2.9 m machine. Cutting it to 3–4 m is realistic but noticeably changes how mining feels. This is the one retune that is a design choice rather than arithmetic.
+- Gravity 1200 → 296.8, on both the player and dropped items.
+- The jump impulse is gone; W now holds the jetpack, and whether you leave the ground is decided by the physics rather than an `is_on_floor()` check.
+- Suction pull is an acceleration, so against 4× weaker gravity the old value felt 4× stronger; `magnet_strength` divided to 6.2e6.
+- `throw_speed` of 600 px/s is 7.5 m/s at the new scale, which is fine, so it was left alone.
+- **[Decided] Drill reach is 2.8 m**, about two body lengths, down from the 6 m the old pixel value became. Less fun, more believable — the designer's call.
+
+**A trap worth recording.** Zeroing `velocity.y` while grounded makes a CharacterBody2D stop pressing into the floor, so `is_on_floor()` flickers and the rover silently gets *air control* while standing still. Keep one frame's worth of weight pressing down instead.
+
+## Damage, wear & fuel
+
+### Damage and wear
+
+**[Decided] Condition is tracked PER PART, not as one rover health bar.** Three reasons it earns the extra bookkeeping:
+
+- *Which* part failed is a far more interesting sentence than how hurt you are. "My drill is worn out" is a problem with a shape; "my rover is at 40%" is not.
+- It feeds specialization: a dedicated hauler wears its motors and never its drill, because it hasn't got one.
+- It connects straight to impurity. A part built at 0.7 purity starts with less durability and wears faster, so **building cheap literally shortens a rover's life** — and that history is where quirks come from.
+
+**[Decided] Parts degrade first, then fail.** A drill at 30% condition is slow; at 0% it stops. Gradual decline is what gives the player warning, and it is the same argument as the execution log: silent sudden failure is punishment, not difficulty.
+
+**[Leaning] Wear follows use, per category.** Motors wear with distance travelled — and faster under load, since a heavy rover works them harder. Drills wear with rock broken. Sensors and logic wear with time powered.
+
+**[Decided] Impact damage is kinetic energy, ½mv², so a full hold makes every fall worse.** This is the *third* consequence of mass, after acceleration and liftoff: flying home loaded is now risky in a new way. Mars gravity keeps falls survivable enough to be a cost rather than instant death.
+
+**Repair needs a Fabrication module and materials**, so damage feeds the crafting loop rather than being a separate system.
+
+**[Question]** Can a part be repaired to full, or does refurbishment leave it permanently a little worse? Permanent degradation would make attrition real and force eventual replacement, which suits a game about running an industrial base — but it needs to not feel like pure grind.
+
+### Jet fuel
+
+**[Decided] Fuel is reaction mass, and it is NOT charge.** The atmosphere settles this: on a thin-atmosphere world a jetpack cannot be a ducted fan, because there is no air to push against. It has to be a rocket, and a rocket carries propellant.
+
+That one physical fact pays for itself:
+
+- **Fuel has weight and burns off as you fly.** A full tank hurts your thrust-to-weight at liftoff and helps at the end of the burn. That is real rocket behaviour and it needs no special-casing — it falls out of the mass system already built.
+- **Dumping fuel to save weight** is a legitimate emergency action, exactly as aircraft do it.
+- **Fuel must be manufactured, never recharged**, which is the real difference from charge:
+
+| | charge | fuel |
+|---|---|---|
+| powers | drill, motors, sensors, logic | the jetpack only |
+| refilled by | sunlight, time | industry |
+| the problem it poses | time and weather | a production chain |
+
+**[Leaning] Made by ISRU, from what is already on the table.** Real Mars mission plans make methalox from CO₂ and water; the material table already has **graphite**, and water is listed as a future fluid. Carbon + water → propellant gives both a purpose and pulls the fluid-extraction fork into the main line rather than leaving it a side branch.
+
+Early on, flying is a luxury you cannot afford, so you walk. The first fuel refinery is a real milestone.
+
+**[Question]** Is the fuel tank a part with its own dry mass and capacity stat (so a bigger tank costs you payload)? That seems right, and it makes range-versus-cargo a live trade on every build.
 
 ## Mining, cargo & materials
 
@@ -130,7 +182,7 @@ This also gives the **selective magnet** a real cost as well as a benefit: filte
 
 - Each rock is a **mixture**: some share of a target mineral, the rest regolith. Copper comes from malachite, iron from hematite, cobalt from cobaltite, carbon from graphite. Composition is what scouting reveals.
 - The **cargo hold is a tank**, not slots: one running total per material against a shared capacity. The **hotbar stays** as 10 slots for tools and items — the two never mix, so a morning's mining can never bury your drill under pebbles.
-- **[Decided] Volume is the cap; mass is the consequence.** The hold takes a fixed volume (150 L). Per-material density makes the load's *mass* vary, and too heavy means poor acceleration and no liftoff — but you can still crawl home. Soft failure, real decision.
+- **[Decided] Volume is the cap; mass is the consequence.** The hold takes a fixed volume (1500 L). Per-material density makes the load's *mass* vary, and too heavy means poor acceleration and no liftoff — but you can still crawl home. Soft failure, real decision.
 
 | material | density (kg/L) |
 |---|---|
@@ -140,11 +192,11 @@ This also gives the **selective magnet** a real cost as well as a benefit: filte
 | hematite | 5.3 |
 | cobaltite | 6.3 |
 
-- One rock is worth **10 units** of gravel and breaks into **3 pebbles** that share it. Every pebble carries the same mixture, so which one you catch never changes what you get.
+- One rock is worth **125 litres** of gravel (half a metre cubed) and breaks into **3 pebbles** that share it, so a 1500 L hold takes 12 tiles. Every pebble carries the same mixture, so which one you catch never changes what you get.
 - **Richness varies per rock** (±25%), rolled once per rock so a rich tile is rich in all its pieces. Vein-scale richness is still **[Question]**.
 - **Suction** grabs everything indiscriminately; strength and range are the upgrade knobs. A **selective magnet** later filters what enters the hold.
 - The existing tactile drop mechanic stays: a broken block pops gravel that suction pulls in. A partly-collected pebble shrinks rather than vanishing.
-- **[Idea] Particles.** Purely visual: a burst of chips when a block breaks and a trickle of grit while drilling, with colours sampled from the tile.
+- **[Decided — built] Particles.** Purely visual: a trickle of grit while the drill bites and a burst of chips when the block breaks, with colours sampled from the tile art and cached per tile type, so a new ore gets matching particles for free. They are drawn much *lighter* than the rock — tinting them the sampled colour exactly makes dark grit on dark stone invisible.
 
 ## Crafting, refining & impurity
 
@@ -173,11 +225,22 @@ Two things fall out of this for free:
 
 **Why anyone would ever build impure:** refining costs charge, a module, and time you may not have with a storm inbound. Impure parts are the *build it now* option. That is what makes it a decision rather than a strict penalty — and it is where rover quirks come from.
 
+### Sorting
+
+**[Leaning] Density fractionation by vibration is the first sorter.** Shaking a load so the heavy fraction settles out is real ore beneficiation (shaking tables, jigs, spirals) and it is *mechanically* simple — a motor and a screen, no electronics — so it can be sintered at Tier 1 while a magnetic sorter needs coils and waits for Tier 2. That gives the two a clean division of labour:
+
+- **Vibration (Tier 1, cheap):** a coarse light/heavy split. It cannot tell hematite from cobaltite, because they are close in density.
+- **Magnetic/selective (Tier 2+):** picks out one named mineral.
+
+The reason this matters more now: **sorting makes a load more valuable and heavier per litre at the same time.** Concentrate your hold down to pure ore and you have traded flight for value, and you will be driving home. The discarded fraction becomes a tailings pile at the dig site — physical evidence of the work, and a landmark.
+
+**[Question]** Tier 1, or on rover 0 from the start? Tier 1 is the current lean, so the pain of hauling worthless bulk lands before the cure does.
+
 ## Rover & module system
 
 The player **builds rovers** assembled from parts. **Rover 0 is simply your current chassis**, made from the same part system. Explicitly **not** a physics rig — no tipping, no torque. A chassis has slots; each part contributes stats or unlocks capabilities.
 
-Part categories, each its own small `Resource` definition (name, **mass**, build cost, purity, stats/capability flags granted, **devices exposed to the scripting namespace**):
+Part categories, each its own small `Resource` definition (name, **mass**, build cost, **purity**, **condition and max durability**, stats/capability flags granted, **devices exposed to the scripting namespace**):
 
 - **Chassis** — defines slot count/types, base movement stats, and dry mass
 - **Mobility** — wheels (fast on flat, bad in mud), treads (slower, steady), possibly hover. Plus the **jetpack**, which is now a thrust value in newtons fighting the rover's mass
@@ -186,6 +249,7 @@ Part categories, each its own small `Resource` definition (name, **mass**, build
 - **Cargo** — holds gravel; capacity in litres is the stat
 - **Collection** — suction, later a selective magnet
 - **Processing** — mobile fabrication and smelting, for expeditions
+- **Fuel tank** — propellant capacity. Its contents have real mass and burn off in flight, so a bigger tank buys range at the cost of payload
 - **Logic** — hosts you, or runs a program. Its tier sets the instruction budget
 - **Radio** — communication range; gates rover-to-rover coordination entirely
 
@@ -299,12 +363,17 @@ The queue belongs only to the interpreter. A real benefit falls out: swapping co
 - **Suction (still named "magnet" in the code):** hold Space with it selected; pull is `strength × (1/d² − 1/range²)`, smoothly reaching zero at the range.
 - **Hotbar:** 10 slots, one item per slot, no stacking. Starts with the drill and suction.
 - **Cargo hold (new):** `material_table.gd` holds rock compositions, colours and densities; `cargo.gd` is the tank (proportional partial fills, so a nearly-full hold cannot sort a load by luck); `cargo_meter.gd` draws it as a filling tank with per-material bands and a legend. Mining yields gravel, never hotbar items.
-- **Known bug:** hotbar tool icons start blank. `player._ready()` adds the tools and triggers a redraw, but `Hotbar._refresh()` looks up the World by group and the World joins that group in *its* `_ready()`, which runs later. Icons resolve to null and nothing redraws them.
-- Not built yet: mass/physics rescale, charge, flashlight, jetpack, parts/chassis, crafting, smelting, impurity, rovers, scripting, hazards, world generation.
+- **Physics & mass (new):** `units.gd` owns the scale (80 px/m, Mars gravity) and every conversion to pixels. Materials have densities, the hold has a `mass()`, and the player moves by force over mass. W holds the jetpack; thrust versus weight decides whether you lift, with no special-case check anywhere. The meter shows mass and warns TOO HEAVY TO LIFT.
+- **Mining particles (new):** `mining_particles.gd`; grit while drilling, a burst on break, tinted from cached tile colours.
+- **Fixed:** hotbar tool icons used to start blank until you pressed a number key. Icons come from the World by group, and a parent's `_ready()` runs *after* its children's, so the hotbar's first refresh found no World and resolved every icon to null. The first refresh is now deferred.
+- Not built yet: charge, jet fuel, damage/wear, flashlight, parts/chassis, crafting, smelting, impurity, sorting, rovers, scripting, hazards, world generation.
+- **Testing note:** when scripting a headless verification run, time things with `Engine.get_physics_frames()`. A `SceneTree._process` loop runs per *render* frame, and headless renders far faster than the 60 Hz physics tick, so counting render frames inflates every measured duration.
 
 ## Open design questions
 
-- [ ] **Drill reach** at the new scale — keep 12 m, or cut to a realistic 3–4 m?
+- [ ] **Sorting tier** — vibration sorter at Tier 1, or on rover 0 from the start?
+- [ ] **Repair** — back to full condition, or permanently a little worse each time?
+- [ ] **Fuel economy** — how far does a tank get you, and is the tank's size a build-time trade against cargo?
 - [ ] **World structure:** one long strip or separate regions? How is terrain generated?
 - [ ] **Charge:** how is it replenished — solar, generator rovers, portable chargers? Now that bases are fixed, is base power a separate system from rover charge?
 - [ ] **How long should one settlement last**, and how much can a convoy carry when you leave?
