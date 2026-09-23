@@ -81,21 +81,22 @@ var fuel: float = 0.0
 
 # --- Magnet (pulls nearby drops toward you while it is active) ---------------
 # The pull on a drop is:  magnet_strength * (1/d^2 - 1/magnet_range^2)
-# where d is its distance from you in pixels. It fades to exactly zero at
+# where d is its distance from you in METRES. It fades to exactly zero at
 # magnet_range. Drops read these numbers from us every tick (see
 # dropped_item.gd), so a future magnet/suction upgrade only has to change them.
-## Bigger = stronger pull. Units are pixels^3 / second^2 (a pull in px/s^2 times d^2).
-## Divided by ~4 when the world was rescaled to Mars gravity: the pull is an
-## acceleration, so against weaker gravity the old value felt four times stronger.
-@export var magnet_strength: float = 6200000.0
-## Beyond this many pixels there is no pull at all.
-@export var magnet_range: float = 300.0
+## Bigger = stronger pull. Units are metres^3 / second^2 (a pull in m/s^2 times
+## d^2 in metres). Real units, like everything else here, so a future change to
+## PIXELS_PER_METER never requires re-tuning this by hand again.
+@export var magnet_strength: float = 12.109375
+## Beyond this many metres there is no pull at all.
+@export var magnet_range: float = 3.75
 
 # --- Throwing ----------------------------------------------------------------
-## How fast a thrown item leaves your hand, pixels/second. It arcs under gravity.
-@export var throw_speed: float = 600.0
-## Spawn the thrown item this far from our centre so it starts outside our body.
-@export var throw_start_distance: float = 95.0
+## How fast a thrown item leaves your hand, metres/second. It arcs under gravity.
+@export var throw_speed: float = 7.5
+## Spawn the thrown item this far from our centre (metres) so it starts outside
+## our body.
+@export var throw_start_distance: float = 1.1875
 ## Seconds before a thrown item can be picked up or magnetised again.
 @export var throw_pickup_delay: float = 1.5
 
@@ -295,11 +296,12 @@ func _throw_selected_item() -> void:
 	# Start just outside our body. If that spot is inside solid rock (we're
 	# pressed against a wall and throwing into it), start at our centre instead,
 	# which is always open, so the item can't spawn stuck in the wall.
-	var start: Vector2 = global_position + dir * throw_start_distance
+	var start: Vector2 = global_position + dir * Units.m_to_px(throw_start_distance)
 	if not _world.is_walkable(_world.world_to_grid(start)):
 		start = global_position
 
-	_world.spawn_drop(start, item_id, _world.item_icon(item_id), dir * throw_speed, throw_pickup_delay)
+	_world.spawn_drop(start, item_id, _world.item_icon(item_id),
+		dir * Units.m_to_px(throw_speed), throw_pickup_delay)
 
 
 # ---------------------------------------------------------------------------

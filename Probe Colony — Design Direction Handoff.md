@@ -1,6 +1,6 @@
 # Probe Colony — Design Direction Handoff
 
-2026-09-18 · @Someone · Revised 2026-09-22
+2026-09-18 · @Someone · Revised 2026-09-23
 
 A 2D Godot game about an autonomous machine that wakes up on an alien planet and has to build a colony from nothing — and then abandon it, and build the next one. Terraria's tactile digging, Dwarf Fortress's emergent colony systems, and Factorio-style automation, with survival reframed as machine maintenance (charge, later lubricant and part wear) instead of hunger. Rovers are commanded by writing real code for them. This doc captures the conceptual/design-direction discussion so it can be picked up in a separate chat; the actual Godot build (scripts, scenes, tile setup) stays in the build chat.
 
@@ -20,6 +20,11 @@ This revision **reverses the central premise of the 2026-09-20 revision.** That 
 - **The scripting layer is text, not blocks.** The 7 Billion Humans drag-and-drop model is dropped in favour of a small Python-like language with an Arduino-style `setup()`/`loop()` structure. (Rewritten section: *Programming/scripting layer*.)
 - **Damage is per-part, and fuel is its own resource.** Parts each carry a condition that degrades before it fails; the jetpack burns manufactured reaction mass rather than charge, because a rocket is the only thing that works in a thin atmosphere. (New section: *Damage, wear & fuel*.)
 - **The cargo hold is built.** Gravel, compositions and the cargo meter are in the prototype as of today, along with the mass system and mining particles.
+
+## What changed in the 2026-09-23 revision
+
+- **Jetpack fuel and cargo dumping are built.** The jetpack burns manufactured propellant that has mass and burns off in flight; holding G pours the hold back out, which is also the physical half of rover-to-rover transfer.
+- **The art scale is now 1 pixel = 1 centimetre**, ahead of drawing module art. This is a pixels-per-metre change only — no mass, volume or speed retuning was needed, and every physics number was verified unchanged. (New subsection: *Art scale — 1 pixel = 1 centimetre*, under *Physics, mass & scale*.) A module size table and the chassis attachment grammar are recorded there too.
 
 ## Premise, mission & identity
 
@@ -128,11 +133,38 @@ This also gives the **selective magnet** a real cost as well as a benefit: filte
 
 - Gravity 1200 → 296.8, on both the player and dropped items.
 - The jump impulse is gone; W now holds the jetpack, and whether you leave the ground is decided by the physics rather than an `is_on_floor()` check.
-- Suction pull is an acceleration, so against 4× weaker gravity the old value felt 4× stronger; `magnet_strength` divided to 6.2e6.
-- `throw_speed` of 600 px/s is 7.5 m/s at the new scale, which is fine, so it was left alone.
+- Suction pull is an acceleration, so against 4× weaker gravity the old value felt 4× stronger; `magnet_strength` divided to 6.2e6. (Later converted to real units entirely — see *Art scale* below.)
+- `throw_speed` of 600 px/s is 7.5 m/s at the new scale, which is fine, so it was left alone. (Also later converted to a real m/s export.)
 - **[Decided] Drill reach is 2.8 m**, about two body lengths, down from the 6 m the old pixel value became. Less fun, more believable — the designer's call.
 
 **A trap worth recording.** Zeroing `velocity.y` while grounded makes a CharacterBody2D stop pressing into the floor, so `is_on_floor()` flickers and the rover silently gets *air control* while standing still. Keep one frame's worth of weight pressing down instead.
+
+### Art scale — 1 pixel = 1 centimetre
+
+**[Decided — built, 2026-09-23]** Ahead of drawing module art, `PIXELS_PER_METER` moved from 80 to **100**, so **one pixel is one centimetre.** Draw a module at N pixels wide and that is its size in the world in centimetres — no conversion, no lookup table.
+
+This is a different kind of change from the tile-size rescale above, and much smaller: it is purely how many pixels of art represent a metre on screen. It does **not** touch `TILE_METERS` (still 0.5 m) or any mass, volume, density, thrust or speed — those are simulation constants, tuned in real units, and every one of them was verified to come out bit-identical after the change (same masses, same liftoff table, same fuel burn, same magnet pull at a given distance). The reason this was possible with almost no retuning is the earlier decision to tune everything in kilograms, newtons, metres and litres and convert to pixels only at the moment of use — this is that decision paying for itself.
+
+What did move, because it lived directly in pixel-measured scene resources rather than behind `Units.gd`:
+
+- The tile grid, its atlas region and every tile's collision polygon (40 px → 50 px).
+- The rover's collision box, now **140 × 145 px = 1.40 × 1.45 m** exactly — also fixing the old 111×115 px box, which was sitting on an off-grid half-pixel.
+- A handful of leftover raw-pixel tuning values that predated the mass rescale (magnet strength/range, throw speed/distance, hop height, drop scatter) were converted to real metres and metres³/s² rather than just multiplied by the 1.25 scale factor, so `PIXELS_PER_METER` never has to be hunted down and retuned again.
+- The two existing art assets (`tile.png`, `Sprite_RV1.png`) were rescaled 1.25× with nearest-neighbour, which lands exactly on integer pixel boundaries (40×1.25=50) — a lossless resize, not a redraw. They remain placeholders; the module art below replaces them properly.
+
+**Module size table**, for the upcoming art pass. Sizes are exact, physically reasoned proportions for a 1.40 × 1.45 m, 1.2 t machine, given directly in pixels — which, at this scale, means directly in centimetres:
+
+| hardpoint | canvas (px = cm) | real size | notes |
+|---|---|---|---|
+| chassis / hull | 200 × 200 | ~2.0 × 1.8 m bounding box | existing sprite; antenna mast sticks up out of the top of this canvas |
+| undercarriage (mobility) | 140 × 40 | 1.4 × 0.4 m | wheels, treads, hover — spans the full hull width |
+| front tool | 60 × 40 | 0.6 × 0.4 m | drill, fluid extractor |
+| rear tool | 40 × 40 | 0.4 × 0.4 m | claw, manipulator |
+| mast | 20 × 50 | 0.2 × 0.5 m | antenna, radar dish |
+| head / sensors | 60 × 30 | 0.6 × 0.3 m | cameras, proximity sensor |
+| internal (never drawn) | — | — | cargo, fuel tank, logic, radio — icon only, 32 × 32, same style as the existing drill/magnet placeholder icons |
+
+**The attachment grammar:** the socket belongs to the chassis, not the module. Draw the connector geometry (the segmented boom joints already visible on RV1) as part of the chassis art, on its own layer, and let every module simply butt up against it. Any module then fits any socket by construction, a missing module leaves a visibly empty socket rather than a hole, and — because there is still no physics rig, no torque, no structural simulation — parts only ever need to *look* attached, never actually be joined.
 
 ## Damage, wear & fuel
 
@@ -365,19 +397,20 @@ The queue belongs only to the interpreter. A real benefit falls out: swapping co
 - **[Idea] Hazard- and charge-aware conditions**, available only with the relevant sensor, so surviving a storm becomes a programming problem.
 - **[Question] Job assignment before scripting exists** — how is a rover told to do anything before the Logic module? Click-to-target, zone designation, or nothing at all until Logic arrives.
 
-## Prototype status (build chat, as of 2026-09-22)
+## Prototype status (build chat, as of 2026-09-23)
 
-- Side-view movement; tile world with per-tile custom data (`solid`, `minable`, `drop_item_id`).
-- **Drill:** mouse-aimed, hold Space with the drill selected, reach about 480 px, one second per tile; grid-walk raycast targeting, outlined target.
+- Side-view movement; tile world with per-tile custom data (`solid`, `minable`, `drop_item_id`). Tiles now draw at 50 px (still physically half a metre).
+- **Drill:** mouse-aimed, hold Space with the drill selected, reach 2.8 m (280 px), one second per tile; grid-walk raycast targeting, outlined target.
 - **Drops:** a small copy of the tile pops out with random scatter, falls, and hops at random intervals.
-- **Suction (still named "magnet" in the code):** hold Space with it selected; pull is `strength × (1/d² − 1/range²)`, smoothly reaching zero at the range.
+- **Suction (still named "magnet" in the code):** hold Space with it selected; pull is `strength × (1/d² − 1/range²)`, computed in real metres and metres³/s², smoothly reaching zero at the range.
 - **Hotbar:** 10 slots, one item per slot, no stacking. Starts with the drill and suction.
-- **Cargo hold (new):** `material_table.gd` holds rock compositions, colours and densities; `cargo.gd` is the tank (proportional partial fills, so a nearly-full hold cannot sort a load by luck); `cargo_meter.gd` draws it as a filling tank with per-material bands and a legend. Mining yields gravel, never hotbar items.
-- **Physics & mass (new):** `units.gd` owns the scale (80 px/m, Mars gravity) and every conversion to pixels. Materials have densities, the hold has a `mass()`, and the player moves by force over mass. W holds the jetpack; thrust versus weight decides whether you lift, with no special-case check anywhere. The meter shows mass and warns TOO HEAVY TO LIFT.
-- **Mining particles (new):** `mining_particles.gd`; grit while drilling, a burst on break, tinted from cached tile colours.
-- **Fixed:** hotbar tool icons used to start blank until you pressed a number key. Icons come from the World by group, and a parent's `_ready()` runs *after* its children's, so the hotbar's first refresh found no World and resolved every icon to null. The first refresh is now deferred.
-- **Jet fuel and cargo dumping (new):** the jetpack burns propellant that has mass and burns off; hold G to pour the hold out.
-- Not built yet: charge, damage/wear, flashlight, parts/chassis, crafting, smelting, impurity, sorting, rovers, scripting, hazards, world generation.
+- **Cargo hold:** `material_table.gd` holds rock compositions, colours and densities; `cargo.gd` is the tank (proportional partial fills both in and out, so a load can't be sorted by luck either way); `cargo_meter.gd` draws it as a filling tank with per-material bands, a legend, mass and a fuel gauge.
+- **Physics & mass:** `units.gd` owns the scale (100 px/m — 1 px = 1 cm — and Mars gravity) and every conversion to pixels. Materials have densities, the hold has a `mass()`, and the player moves by force over mass. W holds the jetpack; thrust versus weight decides whether you lift, with no special-case check anywhere.
+- **Fuel:** the jetpack burns manufactured propellant with real mass and density; running dry means no thrust at all.
+- **Dumping:** hold G to pour gravel back out proportionally, escaping an overloaded hold.
+- **Mining particles:** `mining_particles.gd`; grit while drilling, a burst on break, tinted from cached tile colours.
+- **Fixed:** hotbar tool icons used to start blank until you pressed a number key (a `_ready()` ordering issue); the first refresh is now deferred until the tree is up.
+- Not built yet: charge, damage/wear, flashlight, parts/chassis, crafting, smelting, impurity, sorting, rovers, scripting, hazards, world generation, module art.
 - **Testing note:** when scripting a headless verification run, time things with `Engine.get_physics_frames()`. A `SceneTree._process` loop runs per *render* frame, and headless renders far faster than the 60 Hz physics tick, so counting render frames inflates every measured duration.
 
 ## Open design questions

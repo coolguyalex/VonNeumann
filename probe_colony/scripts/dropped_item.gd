@@ -30,7 +30,7 @@ var gravel: Dictionary = {}
 ## (Named fall_gravity because Area2D already has a built-in "gravity".)
 ## Comes from units.gd so pebbles fall at the same rate the player does.
 @export var fall_gravity: float = Units.GRAVITY_PX
-@export var drop_scale: float = 0.3    # 40px tile -> 12px drop
+@export var drop_scale: float = 0.3    # a ratio of the tile's own size, whatever that is
 
 ## Sideways slowdown, in "fraction of speed lost per second". Without it a
 ## drop that got pulled sideways would slide forever. Higher = stops quicker.
@@ -39,17 +39,18 @@ var gravel: Dictionary = {}
 
 ## Idle hops: a resting drop jumps now and then. Each hop picks its own random
 ## height (px) and each wait picks its own random delay (seconds).
-@export var hop_height_range: Vector2 = Vector2(6.0, 18.0)
+## Metres, not pixels: a real units.gd change never has to touch this again.
+@export var hop_height_range: Vector2 = Vector2(0.075, 0.225)
 @export var hop_delay_range: Vector2 = Vector2(1.0, 4.0)
 
 ## Pickup. A drop is collected when it overlaps the player's body. The magnet only
 ## helps by pulling drops toward you; you can always pick up by touching.
 @export var pickup_enabled: bool = true
 
-## The magnet never treats a drop as closer than this many pixels. 1/d^2 grows
+## The magnet never treats a drop as closer than this many METRES. 1/d^2 grows
 ## enormously as d approaches 0, and this stops a drop that is right next to
 ## the player from getting an absurd kick.
-@export var min_pull_distance: float = 12.0
+@export var min_pull_distance: float = 0.15
 
 # Current speed in pixels/second (x = sideways, y = down is positive).
 # Not private: the world sets it when a drop is thrown (see world.spawn_drop).
@@ -114,19 +115,23 @@ func _apply_magnet(delta: float) -> void:
 	if not _has_room_for_me():
 		return
 
+	# The formula (and player.magnet_strength / magnet_range) is defined in
+	# METRES, so distance is converted before doing any of the maths and the
+	# result converted back to px/s^2 only at the very end. That is what makes
+	# this immune to any future PIXELS_PER_METER change.
 	var to_player: Vector2 = _player.global_position - global_position
-	var dist: float = to_player.length()
+	var dist_m: float = Units.px_to_m(to_player.length())
 	var magnet_range: float = _player.magnet_range
-	if dist >= magnet_range:
+	if dist_m >= magnet_range:
 		return  # out of range: no pull
 
 	# Don't let the distance get so small that 1/d^2 explodes.
-	dist = maxf(dist, min_pull_distance)
+	dist_m = maxf(dist_m, min_pull_distance)
 
-	var pull: float = _player.magnet_strength * (1.0 / (dist * dist) - 1.0 / (magnet_range * magnet_range))
+	var pull_ms2: float = _player.magnet_strength * (1.0 / (dist_m * dist_m) - 1.0 / (magnet_range * magnet_range))
 
 	# Speed up in the direction of the player. (acceleration * time = change in speed)
-	velocity += to_player.normalized() * pull * delta
+	velocity += to_player.normalized() * Units.accel_to_px(pull_ms2) * delta
 
 
 # ---------------------------------------------------------------------------
@@ -182,8 +187,10 @@ func _hop_when_due(delta: float) -> void:
 	_hop_timer -= delta
 	if _hop_timer <= 0.0:
 		# v = sqrt(2 * g * h): the launch speed that peaks at exactly height h.
-		var height: float = randf_range(hop_height_range.x, hop_height_range.y)
-		velocity.y = -sqrt(2.0 * fall_gravity * height)
+		# Worked out in real metres/seconds, then converted once to px/s, so it
+		# does not care what PIXELS_PER_METER happens to be.
+		var height_m: float = randf_range(hop_height_range.x, hop_height_range.y)
+		velocity.y = -Units.m_to_px(sqrt(2.0 * Units.GRAVITY_MS2 * height_m))
 		_reset_hop_timer()
 
 func _reset_hop_timer() -> void:

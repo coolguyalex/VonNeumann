@@ -33,10 +33,10 @@ const NO_TARGET := TileRaycast.NO_TARGET
 ## decorative, so this is safe to turn off on a slow machine.
 @export var particles_enabled: bool = true
 
-## Drops appear up to this many pixels from the mined tile's centre, on each axis.
-## The randomness stops a column of mined tiles from stacking all its drops on
-## one spot, so you can see roughly how many there are.
-@export var drop_spread: float = 14.0
+## Drops appear up to this many METRES from the mined tile's centre, on each
+## axis. The randomness stops a column of mined tiles from stacking all its
+## drops on one spot, so you can see roughly how many there are.
+@export var drop_spread: float = 0.175
 
 # --- Gravel (how much a rock is worth) ---------------------------------------
 # What a rock is MADE OF lives in material_table.gd; how MUCH it is worth lives
@@ -229,9 +229,10 @@ func _spawn_gravel(grid_pos: Vector2i, rock_id: String, texture: Texture2D) -> v
 			pebble[material_id] = rock[material_id] / count
 
 		# Start at the cell centre, then jiggle by a random amount on each axis.
+		var spread_px: float = Units.m_to_px(drop_spread)
 		var pos: Vector2 = grid_to_world(grid_pos) + Vector2(
-			randf_range(-drop_spread, drop_spread),
-			randf_range(-drop_spread, drop_spread))
+			randf_range(-spread_px, spread_px),
+			randf_range(-spread_px, spread_px))
 		spawn_drop(pos, "", texture, Vector2.ZERO, 0.0, pebble)
 
 
