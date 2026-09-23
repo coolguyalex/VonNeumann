@@ -176,6 +176,16 @@ Early on, flying is a luxury you cannot afford, so you walk. The first fuel refi
 
 **[Question]** Is the fuel tank a part with its own dry mass and capacity stat (so a bigger tank costs you payload)? That seems right, and it makes range-versus-cargo a live trade on every build.
 
+**Built 2026-09-23.** Propellant has density (0.83 kg/L) and counts toward total mass, burn rate is `thrust / (Isp × g0)` at Isp 330, and the Tier 0 tank is 150 L — about 30 seconds of continuous full thrust. Running dry means no thrust at all. Holding the button while too heavy to lift still burns propellant: the thruster does not know it is not working, and the meter has already said so.
+
+### Dumping the hold
+
+**[Decided — built] Hold G to pour gravel back out.** Without it the mass system could strand a player: loaded past liftoff weight at the bottom of a hole, with nothing to shed. Volume comes out proportionally from every material, so what lands is a scoop of the mixture and what stays behind is still the same gravel.
+
+This is also **the physical half of rover-to-rover transfer**, arriving early and for free: one machine pours, another sucks it up, and the only new verb the scripting layer will need is `dump`.
+
+Dumped gravel carries a short pickup delay so dumping with the suction running doesn't pull it straight back in — which means a tailings pile is something you can deliberately leave, exactly what the vibration sorter will produce at scale.
+
 ## Mining, cargo & materials
 
 **[Decided — built]** Mining does not yield one item per block. It yields **gravel**:
@@ -366,7 +376,8 @@ The queue belongs only to the interpreter. A real benefit falls out: swapping co
 - **Physics & mass (new):** `units.gd` owns the scale (80 px/m, Mars gravity) and every conversion to pixels. Materials have densities, the hold has a `mass()`, and the player moves by force over mass. W holds the jetpack; thrust versus weight decides whether you lift, with no special-case check anywhere. The meter shows mass and warns TOO HEAVY TO LIFT.
 - **Mining particles (new):** `mining_particles.gd`; grit while drilling, a burst on break, tinted from cached tile colours.
 - **Fixed:** hotbar tool icons used to start blank until you pressed a number key. Icons come from the World by group, and a parent's `_ready()` runs *after* its children's, so the hotbar's first refresh found no World and resolved every icon to null. The first refresh is now deferred.
-- Not built yet: charge, jet fuel, damage/wear, flashlight, parts/chassis, crafting, smelting, impurity, sorting, rovers, scripting, hazards, world generation.
+- **Jet fuel and cargo dumping (new):** the jetpack burns propellant that has mass and burns off; hold G to pour the hold out.
+- Not built yet: charge, damage/wear, flashlight, parts/chassis, crafting, smelting, impurity, sorting, rovers, scripting, hazards, world generation.
 - **Testing note:** when scripting a headless verification run, time things with `Engine.get_physics_frames()`. A `SceneTree._process` loop runs per *render* frame, and headless renders far faster than the 60 Hz physics tick, so counting render frames inflates every measured duration.
 
 ## Open design questions
