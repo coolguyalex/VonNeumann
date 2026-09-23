@@ -18,7 +18,7 @@ extends CanvasLayer
 ## Whole widget, in pixels. The legend draws one line per material held and
 ## quietly stops at the bottom edge, so make this taller if you add enough ores
 ## to run out of room.
-@export var panel_size: Vector2 = Vector2(216.0, 172.0)
+@export var panel_size: Vector2 = Vector2(216.0, 196.0)
 @export var screen_margin: float = 16.0   # gap from the bottom-left corner
 @export var padding: float = 10.0         # gap between panel edge and contents
 @export var tank_width: float = 46.0
@@ -36,9 +36,14 @@ extends CanvasLayer
 @export var full_color: Color = Color(1.0, 0.55, 0.2)
 @export var tank_empty_color: Color = Color(0.05, 0.05, 0.07, 0.9)
 @export var text_color: Color = Color(0.85, 0.86, 0.9)
+## Used for the mass readout once the load is too heavy to take off with.
+@export var warning_color: Color = Color(1.0, 0.36, 0.28)
 
 # --- Internals ---------------------------------------------------------------
 var _cargo: Cargo = null
+## The rover this hold belongs to. Optional: without it the meter just drops the
+## mass readout, so the widget still works on a hold that isn't carried.
+var _rover: Node = null
 var _canvas: Control = null
 
 ## material id -> the amount currently being DRAWN, which lags behind the real
@@ -47,7 +52,8 @@ var _shown: Dictionary = {}
 
 
 ## Call once (the player does this) to attach this meter to a cargo hold.
-func setup(cargo: Cargo) -> void:
+func setup(cargo: Cargo, rover: Node = null) -> void:
+	_rover = rover
 	# Build the UI before taking the cargo, so _process() (which skips everything
 	# while _cargo is null) can never run against a half-built widget.
 	_build()
@@ -121,7 +127,7 @@ func _process(delta: float) -> void:
 			continue
 		var drained: float = move_toward(_shown[material_id], 0.0, step)
 		changed = true
-		if drained <= Cargo.MIN_UNITS:
+		if drained <= Cargo.MIN_LITRES:
 			_shown.erase(material_id)
 		else:
 			_shown[material_id] = drained
@@ -147,19 +153,41 @@ func _on_draw() -> void:
 	_canvas.draw_rect(panel, panel_color)
 	_canvas.draw_rect(panel, frame_color, false, 3.0)
 
-	# Header: "CARGO   84 / 150".
-	var header_baseline: float = padding + font.get_ascent(font_size)
-	_canvas.draw_string(font, Vector2(padding, header_baseline), "CARGO",
-		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, text_color)
-	_canvas.draw_string(font, Vector2(padding, header_baseline),
-		"%d / %d" % [roundi(_cargo.total()), roundi(_cargo.capacity)],
-		HORIZONTAL_ALIGNMENT_RIGHT, _canvas.size.x - padding * 2.0, font_size, text_color)
+	# Three header lines, always reserved so the layout never shifts: volume,
+	# mass, and a warning slot that is blank unless you are too heavy to fly.
+	var line_height: float = font.get_height(font_size)
+	var baseline: float = padding + font.get_ascent(font_size)
 
-	# The tank sits under the header and runs to the bottom of the panel.
-	var top: float = padding + font.get_height(font_size) + 6.0
+	_draw_row(font, font_size, baseline, "CARGO",
+		"%d / %d L" % [roundi(_cargo.total()), roundi(_cargo.capacity)], text_color)
+
+	if _rover != null:
+		# Volume is what stops you loading more; mass is what stops you flying.
+		# They are different limits, so they get separate lines.
+		var grounded: bool = not _rover.can_lift()
+		var mass_color: Color = warning_color if grounded else text_color
+		_draw_row(font, font_size, baseline + line_height, "MASS",
+			Units.mass_text(_rover.total_mass()), mass_color)
+
+		if grounded:
+			_canvas.draw_string(font, Vector2(padding, baseline + line_height * 2.0),
+				"TOO HEAVY TO LIFT", HORIZONTAL_ALIGNMENT_CENTER,
+				_canvas.size.x - padding * 2.0, font_size, warning_color)
+
+	# The tank sits under the header block and runs to the bottom of the panel.
+	var top: float = padding + line_height * 3.0 + 6.0
 	var tank := Rect2(padding, top, tank_width, _canvas.size.y - top - padding)
 	_draw_tank(tank, frame_color)
 	_draw_legend(Vector2(tank.end.x + legend_gap, top), font, font_size)
+
+
+# One header line: a label on the left, a value on the right, same baseline.
+func _draw_row(font: Font, font_size: int, baseline: float, label: String,
+		value: String, value_color: Color) -> void:
+	_canvas.draw_string(font, Vector2(padding, baseline), label,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, text_color)
+	_canvas.draw_string(font, Vector2(padding, baseline), value,
+		HORIZONTAL_ALIGNMENT_RIGHT, _canvas.size.x - padding * 2.0, font_size, value_color)
 
 
 # The tank: a dark well, the stacked material bands, then a frame on top so the

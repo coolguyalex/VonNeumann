@@ -29,6 +29,10 @@ const NO_TARGET := TileRaycast.NO_TARGET
 ## Master switch for drops. Turn off to make mining just delete tiles.
 @export var drops_enabled: bool = true
 
+## Master switch for the chips and grit thrown off while drilling. Purely
+## decorative, so this is safe to turn off on a slow machine.
+@export var particles_enabled: bool = true
+
 ## Drops appear up to this many pixels from the mined tile's centre, on each axis.
 ## The randomness stops a column of mined tiles from stacking all its drops on
 ## one spot, so you can see roughly how many there are.
@@ -39,8 +43,9 @@ const NO_TARGET := TileRaycast.NO_TARGET
 # here, because it is really a tuning number: it and the player's cargo_capacity
 # together decide how many tiles you can dig before you have to stop.
 
-## Units of gravel one mined tile is worth. At 10, a 150-unit hold takes 15 tiles.
-@export var gravel_per_tile: float = 10.0
+## Litres of gravel one mined tile is worth. A tile is half a metre cubed, so
+## 0.125 m³ = 125 litres of rock. At that rate a 1500 L hold takes 12 tiles.
+@export var gravel_per_tile: float = 125.0
 
 ## How many pebbles one tile breaks into. They share the tile's gravel evenly,
 ## so this is a looks-and-feel number, not an economy one.
@@ -54,6 +59,11 @@ const NO_TARGET := TileRaycast.NO_TARGET
 
 ## item id -> icon picture, built once at startup (see item_icons.gd).
 var _item_icons: Dictionary = {}
+
+## atlas coords -> the tile's average Colour, worked out the first time it is
+## asked for. Reading pixels out of a texture is far too slow to do per frame,
+## and there are only a handful of tile types, so the answers are kept.
+var _tile_colors: Dictionary = {}
 
 
 func _ready() -> void:
@@ -113,6 +123,45 @@ func item_icon(item_id: String) -> Texture2D:
 	return _item_icons.get(item_id)
 
 
+## The average colour of the tile in a cell, for tinting its mining particles.
+## Grey for an empty cell. Sample this BEFORE mining, obviously: once the tile
+## is erased there is nothing left to read.
+func tile_color(grid_pos: Vector2i) -> Color:
+	var coords: Vector2i = tile_map.get_cell_atlas_coords(grid_pos)
+	if _tile_colors.has(coords):
+		return _tile_colors[coords]
+
+	var color := Color(0.5, 0.5, 0.5)
+	var source := tile_map.tile_set.get_source(tile_map.get_cell_source_id(grid_pos)) as TileSetAtlasSource
+	if source != null:
+		color = _average_color(source.texture.get_image(), source.get_tile_texture_region(coords))
+	_tile_colors[coords] = color
+	return color
+
+
+## Averages a patch of an image, skipping see-through pixels. Steps across the
+## region rather than reading every pixel: a tile is 40x40, and a 6x6 sample is
+## plenty to tell brown regolith from green malachite.
+func _average_color(image: Image, region: Rect2i) -> Color:
+	const SAMPLES := 6
+	var total := Color(0.0, 0.0, 0.0, 0.0)
+	var counted := 0
+
+	for ix in SAMPLES:
+		for iy in SAMPLES:
+			var x: int = region.position.x + (region.size.x * ix) / SAMPLES
+			var y: int = region.position.y + (region.size.y * iy) / SAMPLES
+			var pixel: Color = image.get_pixel(x, y)
+			if pixel.a < 0.5:
+				continue  # transparent corners would wash the average out
+			total += pixel
+			counted += 1
+
+	if counted == 0:
+		return Color(0.5, 0.5, 0.5)
+	return Color(total.r / counted, total.g / counted, total.b / counted)
+
+
 # ---------------------------------------------------------------------------
 # Mining
 # ---------------------------------------------------------------------------
@@ -132,10 +181,15 @@ func mine_tile(grid_pos: Vector2i) -> void:
 	# regolith, not a lump of copper.
 	var rock_id: String = str(data.get_custom_data("drop_item_id"))
 
-	# Grab the tile's picture BEFORE erasing it; once it's gone we can't read it.
+	# Grab the tile's picture and colour BEFORE erasing it; once it's gone we
+	# can't read either.
 	var drop_texture: Texture2D = _tile_texture(grid_pos)
+	var chip_color: Color = tile_color(grid_pos)
 
 	tile_map.erase_cell(grid_pos)
+
+	if particles_enabled:
+		MiningParticles.burst(self, grid_to_world(grid_pos), chip_color)
 	if drops_enabled:
 		_spawn_gravel(grid_pos, rock_id, drop_texture)
 

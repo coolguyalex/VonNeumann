@@ -26,6 +26,24 @@ const COMPOSITIONS := {
 	"raw_carbon": {"graphite": 0.40},
 }
 
+## material id -> density in kg per litre (i.e. tonnes per m³), real values.
+##
+## This is the table that makes a full hold a DECISION rather than a number. The
+## worthless bulk is light and the valuable ore is heavy, so a hold full of
+## regolith still flies and a hold full of hematite pins you to the ground. Any
+## sorting or concentrating the player does later makes the load MORE valuable
+## and HEAVIER at the same time.
+const DENSITIES := {
+	"regolith": 1.5,   # loose, unconsolidated
+	"graphite": 2.2,
+	"malachite": 4.0,
+	"hematite": 5.3,
+	"cobaltite": 6.3,
+}
+
+## Density for a material this table has never heard of: assume light rubble.
+const UNKNOWN_DENSITY := 2.0
+
 ## material id -> the colour it shows as in the cargo meter.
 const COLORS := {
 	"regolith": Color(0.44, 0.39, 0.34),
@@ -49,6 +67,11 @@ static func ore_shares(rock_id: String) -> Dictionary:
 ## The colour a material draws as.
 static func color(material_id: String) -> Color:
 	return COLORS.get(material_id, UNKNOWN_COLOR)
+
+
+## How heavy one litre of a material is, in kilograms.
+static func density(material_id: String) -> float:
+	return DENSITIES.get(material_id, UNKNOWN_DENSITY)
 
 
 ## "hematite" -> "Hematite". Godot's capitalize() also turns "raw_copper" into

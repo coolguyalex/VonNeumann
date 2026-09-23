@@ -10,23 +10,29 @@ extends RefCounted
 ## There is one running total per material and ONE capacity they all share, so
 ## filling up on regolith really does leave no room for copper. Nothing in here
 ## knows what any material IS, so a new ore needs no change in this file.
+##
+## EVERYTHING HERE IS MEASURED IN LITRES, because the hold is a physical tank and
+## volume is what runs out. MASS is a separate consequence: materials have wildly
+## different densities (regolith 1.5 kg/L, hematite 5.3), so two full holds can
+## differ in weight by a factor of three. Volume stops you loading more; mass
+## decides whether you can still move, and whether you can take off at all.
 
 ## Emitted whenever the contents change. The cargo meter redraws on it.
 signal changed
 
-## Amounts smaller than this are treated as nothing, so rounding dust from a
-## partial pickup can't leave a material sitting in the hold at 0.000001 units.
-const MIN_UNITS := 0.0001
+## Volumes smaller than this are treated as nothing, so rounding dust from a
+## partial pickup can't leave a material sitting in the hold at 0.000001 litres.
+const MIN_LITRES := 0.0001
 
-## How many units fit in total, counting every material together.
+## How many litres fit in total, counting every material together.
 ## The player sets this from its own cargo_capacity (upgrades raise it).
-var capacity: float = 150.0
+var capacity: float = 1500.0
 
-## material id -> units held. A material at zero is removed, not kept at 0.
+## material id -> litres held. A material at zero is removed, not kept at 0.
 var amounts: Dictionary = {}
 
 
-## Units held right now, all materials added together.
+## Litres held right now, all materials added together.
 func total() -> float:
 	var sum := 0.0
 	for material_id in amounts:
@@ -34,29 +40,41 @@ func total() -> float:
 	return sum
 
 
-## Units of room left.
+## Litres of room left.
 func free_space() -> float:
 	return maxf(capacity - total(), 0.0)
 
 
 ## Is there room for anything at all? Drops check this before flying to you.
 func has_room() -> bool:
-	return free_space() > MIN_UNITS
+	return free_space() > MIN_LITRES
 
 
-## How full we are, 0.0 to 1.0. This is what the meter draws.
+## What everything in the hold WEIGHS, in kilograms.
+##
+## Nothing here caps or checks it. The rover adds this to its own dry mass and
+## lives with the result (see player.total_mass), which is the whole point: a
+## hold can be perfectly legal by volume and still be too heavy to lift off.
+func mass() -> float:
+	var kg := 0.0
+	for material_id in amounts:
+		kg += amounts[material_id] * MaterialTable.density(material_id)
+	return kg
+
+
+## How full we are BY VOLUME, 0.0 to 1.0. This is what the meter's tank draws.
 func fill_fraction() -> float:
 	if capacity <= 0.0:
 		return 1.0
 	return clampf(total() / capacity, 0.0, 1.0)
 
 
-## Units of one material (0.0 if we have none).
+## Litres of one material (0.0 if we have none).
 func amount_of(material_id: String) -> float:
 	return amounts.get(material_id, 0.0)
 
 
-## Pours in a mixture ({ material id : units }, as MaterialTable.sample_gravel
+## Pours in a mixture ({ material id : litres }, as MaterialTable.sample_gravel
 ## builds it) and returns WHATEVER DID NOT FIT, in the same form. An empty
 ## return means all of it went in.
 ##
@@ -68,7 +86,7 @@ func add_mixture(mixture: Dictionary) -> Dictionary:
 	var incoming := 0.0
 	for material_id in mixture:
 		incoming += mixture[material_id]
-	if incoming <= MIN_UNITS:
+	if incoming <= MIN_LITRES:
 		return {}
 
 	var accepted_fraction: float = minf(free_space() / incoming, 1.0)
@@ -77,10 +95,10 @@ func add_mixture(mixture: Dictionary) -> Dictionary:
 	for material_id in mixture:
 		var offered: float = mixture[material_id]
 		var taken: float = offered * accepted_fraction
-		if taken > MIN_UNITS:
+		if taken > MIN_LITRES:
 			amounts[material_id] = amount_of(material_id) + taken
 		var rest: float = offered - taken
-		if rest > MIN_UNITS:
+		if rest > MIN_LITRES:
 			leftover[material_id] = rest
 
 	if accepted_fraction > 0.0:
@@ -88,16 +106,16 @@ func add_mixture(mixture: Dictionary) -> Dictionary:
 	return leftover
 
 
-## Takes units of one material back out (for dumping, or later for feeding a
+## Takes litres of one material back out (for dumping, or later for feeding a
 ## smelter). Returns how much was actually removed, which is less than asked for
 ## if we did not have that much.
-func take(material_id: String, units: float) -> float:
+func take(material_id: String, litres: float) -> float:
 	var held: float = amount_of(material_id)
-	var removed: float = minf(units, held)
-	if removed <= MIN_UNITS:
+	var removed: float = minf(litres, held)
+	if removed <= MIN_LITRES:
 		return 0.0
 
-	if held - removed <= MIN_UNITS:
+	if held - removed <= MIN_LITRES:
 		amounts.erase(material_id)  # don't leave rounding dust behind
 	else:
 		amounts[material_id] = held - removed
