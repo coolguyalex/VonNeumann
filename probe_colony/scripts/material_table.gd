@@ -14,6 +14,12 @@ extends RefCounted
 ## The worthless bulk that every rock is mostly made of.
 const REGOLITH := "regolith"
 
+## Jetpack propellant. It is not dug up -- it is manufactured, and it lives in
+## its own tank rather than the cargo hold -- but it is listed here with the
+## rest so that its density and colour come from the same place as everything
+## else, and so a future refinery can produce it as an ordinary material.
+const PROPELLANT := "propellant"
+
 ## tile drop_item_id -> { material id : share of the rock, 0.0 to 1.0 }.
 ## Only the ore shares are listed: whatever is left over is regolith, so these
 ## do not have to add up to 1 by hand. A rock missing from this table is treated
@@ -39,6 +45,7 @@ const DENSITIES := {
 	"malachite": 4.0,
 	"hematite": 5.3,
 	"cobaltite": 6.3,
+	"propellant": 0.83,  # methalox at its usual mixture ratio: light, but not free
 }
 
 ## Density for a material this table has never heard of: assume light rubble.
@@ -51,6 +58,7 @@ const COLORS := {
 	"hematite": Color(0.68, 0.26, 0.21),
 	"cobaltite": Color(0.38, 0.48, 0.78),
 	"graphite": Color(0.38, 0.38, 0.42),
+	"propellant": Color(0.95, 0.62, 0.20),
 }
 
 ## Colour for a material this table has never heard of.

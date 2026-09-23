@@ -63,6 +63,20 @@ extends CharacterBody2D
 ## Climb rate cap, metres/second, so an empty rover doesn't rocket off-screen.
 @export var jetpack_max_climb: float = 8.0
 
+## Specific impulse, in seconds: how efficiently the thruster turns propellant
+## into thrust. 330 is about right for methalox. Burn rate is thrust divided by
+## (Isp x standard gravity), so a bigger thruster drinks proportionally more.
+@export var jetpack_isp: float = 330.0
+
+## How much propellant the tank holds, in litres. At Tier 0 this is about 30
+## seconds of continuous full thrust -- plenty for hops, nowhere near enough to
+## treat flying as free travel.
+@export var fuel_capacity: float = 150.0
+
+## Propellant on board, in litres. Starts full; there is no way to make more
+## yet, so for now this is a one-way resource.
+var fuel: float = 0.0
+
 # --- Magnet (pulls nearby drops toward you while it is active) ---------------
 # The pull on a drop is:  magnet_strength * (1/d^2 - 1/magnet_range^2)
 # where d is its distance from you in pixels. It fades to exactly zero at
@@ -116,6 +130,7 @@ func _ready() -> void:
 	# The hold's size is an Inspector setting on us, so hand it over before
 	# anything can start filling it.
 	cargo.capacity = cargo_capacity
+	fuel = fuel_capacity
 
 	# Connect the two on-screen displays and the drill to us.
 	_hotbar.setup(inventory)
@@ -151,9 +166,15 @@ func _physics_process(delta: float) -> void:
 # the weight, the sum simply comes out downward and you stay on the floor.
 func _apply_vertical(delta: float, mass: float) -> void:
 	var thrust_accel := 0.0
-	if Input.is_action_pressed("move_up"):
+	if Input.is_action_pressed("move_up") and fuel > 0.0:
 		# force / mass is an acceleration in m/s²; convert once to pixels.
 		thrust_accel = Units.accel_to_px(jetpack_thrust / mass)
+
+		# Burn propellant. Note this happens even when you are too heavy to
+		# actually leave the ground: the thruster does not know that, and the
+		# meter has already warned you. Holding the button in a hole you cannot
+		# climb out of really does waste the tank.
+		fuel = maxf(fuel - fuel_burn_rate() * delta, 0.0)
 
 	# Positive = still falling on balance, negative = climbing.
 	var net: float = Units.GRAVITY_PX - thrust_accel
@@ -256,9 +277,30 @@ func _throw_selected_item() -> void:
 # Mass
 # ---------------------------------------------------------------------------
 
-## What this machine weighs right now, in kilograms: itself plus its load.
+## What this machine weighs right now, in kilograms: itself, its propellant and
+## its load. Propellant counts, which is why a full tank is worst at liftoff and
+## the machine gets lighter the longer it flies -- exactly like a real rocket,
+## and it falls out of the arithmetic rather than being special-cased.
 func total_mass() -> float:
-	return dry_mass + cargo.mass()
+	return dry_mass + fuel_mass() + cargo.mass()
+
+
+## What the propellant aboard weighs, in kilograms.
+func fuel_mass() -> float:
+	return fuel * MaterialTable.density(MaterialTable.PROPELLANT)
+
+
+## Propellant used per second at full thrust, in LITRES (the tank's unit).
+## Thrust / (Isp x g0) gives kilograms per second; dividing by density gives
+## litres. A thirstier or more powerful thruster empties the tank faster.
+func fuel_burn_rate() -> float:
+	var kg_per_sec: float = jetpack_thrust / (jetpack_isp * Units.STANDARD_GRAVITY)
+	return kg_per_sec / MaterialTable.density(MaterialTable.PROPELLANT)
+
+
+## Seconds of continuous full thrust left in the tank.
+func fuel_seconds() -> float:
+	return fuel / fuel_burn_rate()
 
 
 ## Can the jetpack beat our own weight at the moment? The movement code doesn't

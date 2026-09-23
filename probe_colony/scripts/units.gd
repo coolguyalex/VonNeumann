@@ -29,6 +29,11 @@ const GRAVITY_MS2 := 3.71
 ## The same gravity in pixels/s², which is what the movement code actually uses.
 const GRAVITY_PX := GRAVITY_MS2 * PIXELS_PER_METER
 
+## Standard gravity, m/s². NOT this planet's gravity: specific impulse is
+## defined against Earth's 9.80665 wherever the engine happens to be firing,
+## so this is the number that converts a jetpack's Isp into a fuel burn rate.
+const STANDARD_GRAVITY := 9.80665
+
 
 ## Metres -> pixels. Use for distances and speeds read from the Inspector.
 static func m_to_px(meters: float) -> float:

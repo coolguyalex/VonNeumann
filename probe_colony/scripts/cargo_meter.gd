@@ -18,7 +18,7 @@ extends CanvasLayer
 ## Whole widget, in pixels. The legend draws one line per material held and
 ## quietly stops at the bottom edge, so make this taller if you add enough ores
 ## to run out of room.
-@export var panel_size: Vector2 = Vector2(216.0, 196.0)
+@export var panel_size: Vector2 = Vector2(216.0, 218.0)
 @export var screen_margin: float = 16.0   # gap from the bottom-left corner
 @export var padding: float = 10.0         # gap between panel edge and contents
 @export var tank_width: float = 46.0
@@ -49,6 +49,11 @@ var _canvas: Control = null
 ## material id -> the amount currently being DRAWN, which lags behind the real
 ## amount in _cargo while the pour animation catches up.
 var _shown: Dictionary = {}
+
+# Last drawn mass and fuel, so we can notice when they move. Unlike the hold,
+# these are not behind a `changed` signal -- they are read off the rover.
+var _shown_mass: float = -1.0
+var _shown_fuel: float = -1.0
 
 
 ## Call once (the player does this) to attach this meter to a cargo hold.
@@ -132,6 +137,17 @@ func _process(delta: float) -> void:
 		else:
 			_shown[material_id] = drained
 
+	# Fuel and mass change without the hold changing -- burning propellant alters
+	# both every frame you hold the thruster -- so the pour animation alone is
+	# not enough to keep the readouts honest.
+	if _rover != null:
+		var mass: float = _rover.total_mass()
+		var fuel: float = _rover.fuel
+		if not is_equal_approx(mass, _shown_mass) or not is_equal_approx(fuel, _shown_fuel):
+			_shown_mass = mass
+			_shown_fuel = fuel
+			changed = true
+
 	if changed:
 		_canvas.queue_redraw()
 
@@ -162,23 +178,54 @@ func _on_draw() -> void:
 		"%d / %d L" % [roundi(_cargo.total()), roundi(_cargo.capacity)], text_color)
 
 	if _rover != null:
+		# FUEL first, and the row is its own gauge: a bar filled to the tank's
+		# level is drawn behind the text, so the number and the glance-value sit
+		# in the same place without costing another line of panel.
+		var fuel_fraction: float = clampf(_rover.fuel / _rover.fuel_capacity, 0.0, 1.0)
+		var dry: bool = _rover.fuel <= 0.0
+		_draw_gauge_background(baseline + line_height, line_height, fuel_fraction)
+		_draw_row(font, font_size, baseline + line_height, "FUEL",
+			"%d L  ·  %ds" % [roundi(_rover.fuel), roundi(_rover.fuel_seconds())],
+			warning_color if dry else text_color)
+
 		# Volume is what stops you loading more; mass is what stops you flying.
 		# They are different limits, so they get separate lines.
 		var grounded: bool = not _rover.can_lift()
 		var mass_color: Color = warning_color if grounded else text_color
-		_draw_row(font, font_size, baseline + line_height, "MASS",
+		_draw_row(font, font_size, baseline + line_height * 2.0, "MASS",
 			Units.mass_text(_rover.total_mass()), mass_color)
 
-		if grounded:
-			_canvas.draw_string(font, Vector2(padding, baseline + line_height * 2.0),
-				"TOO HEAVY TO LIFT", HORIZONTAL_ALIGNMENT_CENTER,
+		# One warning slot. Being out of fuel is the more urgent of the two,
+		# because dumping cargo cannot fix it.
+		var warning := ""
+		if dry:
+			warning = "OUT OF FUEL"
+		elif grounded:
+			warning = "TOO HEAVY TO LIFT"
+		if warning != "":
+			_canvas.draw_string(font, Vector2(padding, baseline + line_height * 3.0),
+				warning, HORIZONTAL_ALIGNMENT_CENTER,
 				_canvas.size.x - padding * 2.0, font_size, warning_color)
 
 	# The tank sits under the header block and runs to the bottom of the panel.
-	var top: float = padding + line_height * 3.0 + 6.0
+	var top: float = padding + line_height * 4.0 + 6.0
 	var tank := Rect2(padding, top, tank_width, _canvas.size.y - top - padding)
 	_draw_tank(tank, frame_color)
 	_draw_legend(Vector2(tank.end.x + legend_gap, top), font, font_size)
+
+
+# A dim bar filling part of a header row's width, drawn behind its text so the
+# row reads as a gauge as well as a number.
+func _draw_gauge_background(baseline: float, line_height: float, fraction: float) -> void:
+	var top: float = baseline - line_height + 3.0
+	var full_width: float = _canvas.size.x - padding * 2.0
+	var box := Rect2(padding, top, full_width, line_height)
+
+	_canvas.draw_rect(box, Color(0.0, 0.0, 0.0, 0.25))
+	if fraction > 0.0:
+		var fill: Color = MaterialTable.color(MaterialTable.PROPELLANT)
+		fill.a = 0.35
+		_canvas.draw_rect(Rect2(box.position, Vector2(full_width * fraction, box.size.y)), fill)
 
 
 # One header line: a label on the left, a value on the right, same baseline.
