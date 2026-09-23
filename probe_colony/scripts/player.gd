@@ -3,12 +3,20 @@ extends CharacterBody2D
 ##   - Move with A/D, jump with W (a side-view platformer).
 ##   - 1-9, 0 select a hotbar slot. Whatever is selected is your "active item".
 ##   - Hold Space to USE the active item:  drill = mine, magnet = pull drops.
-##     Items with no function (like a lump of ore) do nothing yet.
+##     Items with no function do nothing yet.
 ##   - Q throws the selected item out into the world.
 ##
+## You carry things in TWO separate places, and they never mix:
+##   the hotbar (inventory.gd) - 10 slots, one TOOL or item each
+##   the hold   (cargo.gd)     - a tank of gravel, measured by weight, that
+##                               mined material is poured into
+## That split is why a morning's mining can't bury your drill under pebbles.
+##
 ## The heavy lifting lives in other files:
-##   miner.gd     - the drill        hotbar.gd    - the on-screen slots
-##   inventory.gd - what you carry   dropped_item.gd - drops (they read our magnet_*)
+##   miner.gd     - the drill        hotbar.gd     - the on-screen slots
+##   inventory.gd - tools you carry  cargo.gd      - material you have dug up
+##   cargo_meter.gd - the on-screen tank
+##   dropped_item.gd - drops (they read our magnet_*)
 ##
 ## KEYS are NAMED ACTIONS from Project Settings > Input Map (use_item, throw_item,
 ## hotbar_1..hotbar_10, move_*). This file never mentions a specific key, so a
@@ -38,16 +46,27 @@ extends CharacterBody2D
 ## Seconds before a thrown item can be picked up or magnetised again.
 @export var throw_pickup_delay: float = 1.5
 
+# --- Cargo hold --------------------------------------------------------------
+## Units of material the hold takes, counting every material together. This is
+## the Tier 0 hold: deliberately small, so you have to stop and think about the
+## trip back. A bigger cargo module raises it.
+@export var cargo_capacity: float = 150.0
+
 # --- State -------------------------------------------------------------------
-## What we're carrying (data only).
+## The tools we're carrying, one per hotbar slot (data only).
 var inventory := Inventory.new()
+
+## The gravel we've dug up, by material (data only). Mined pebbles pour in here;
+## nothing mined ever reaches the hotbar.
+var cargo := Cargo.new()
 
 ## True while the magnet is switched on. Drops check this every tick.
 var magnet_active: bool = false
 
 # The child nodes made in player.tscn.
-@onready var _hotbar: Hotbar = $Hotbar   # the on-screen slot row
-@onready var _miner: Miner = $Miner      # the drill behaviour
+@onready var _hotbar: Hotbar = $Hotbar          # the on-screen slot row
+@onready var _cargo_meter: CargoMeter = $CargoMeter  # the on-screen hold
+@onready var _miner: Miner = $Miner             # the drill behaviour
 
 var _world: Node = null                  # the World node; found on first use
 
@@ -56,8 +75,13 @@ func _ready() -> void:
 	# Lets other scripts (like drops) find the player.
 	add_to_group("player")
 
-	# Connect the on-screen hotbar and the drill to us.
+	# The hold's size is an Inspector setting on us, so hand it over before
+	# anything can start filling it.
+	cargo.capacity = cargo_capacity
+
+	# Connect the two on-screen displays and the drill to us.
 	_hotbar.setup(inventory)
+	_cargo_meter.setup(cargo)
 	_miner.setup(self)
 
 	# Starting kit: the drill and the magnet take the first two slots.
@@ -141,7 +165,14 @@ func _throw_selected_item() -> void:
 	_world.spawn_drop(start, item_id, _world.item_icon(item_id), dir * throw_speed, throw_pickup_delay)
 
 
-## Tries to pick up one item. Returns true if it fit, false if the inventory is
-## full. Drops call this (see dropped_item.gd).
+## Tries to pick up one whole item into a hotbar slot. Returns true if it fit,
+## false if the hotbar is full. Drops call this (see dropped_item.gd).
 func add_item(item_id: String) -> bool:
 	return inventory.add_item(item_id)
+
+
+## Pours a pebble's worth of gravel ({ material id : units }) into the hold and
+## returns whatever DIDN'T fit, in the same form. Drops call this; an empty
+## return means the pebble was swallowed whole.
+func add_gravel(mixture: Dictionary) -> Dictionary:
+	return cargo.add_mixture(mixture)

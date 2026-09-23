@@ -11,8 +11,10 @@ extends Node2D
 ## editor: select the TileSet > pick a tile > Custom Data.
 ##   "solid"        (bool)   - blocks movement
 ##   "minable"      (bool)   - can be mined at all
-##   "drop_item_id" (String) - id of the item it drops when mined
-## Because of this, adding a new ore is a TileSet edit, not a code change.
+##   "drop_item_id" (String) - which ROCK this tile is ("raw_iron"). It is not an
+##                             item you carry: material_table.gd turns it into the
+##                             mixture of materials the tile breaks into.
+## Because of this, adding a new ore is a TileSet edit plus one row in that table.
 
 ## The tile map that holds every tile in the level.
 @onready var tile_map: TileMapLayer = $Layer0
@@ -31,6 +33,23 @@ const NO_TARGET := TileRaycast.NO_TARGET
 ## The randomness stops a column of mined tiles from stacking all its drops on
 ## one spot, so you can see roughly how many there are.
 @export var drop_spread: float = 14.0
+
+# --- Gravel (how much a rock is worth) ---------------------------------------
+# What a rock is MADE OF lives in material_table.gd; how MUCH it is worth lives
+# here, because it is really a tuning number: it and the player's cargo_capacity
+# together decide how many tiles you can dig before you have to stop.
+
+## Units of gravel one mined tile is worth. At 10, a 150-unit hold takes 15 tiles.
+@export var gravel_per_tile: float = 10.0
+
+## How many pebbles one tile breaks into. They share the tile's gravel evenly,
+## so this is a looks-and-feel number, not an economy one.
+@export var pebbles_per_tile: int = 3
+
+## How much richer or poorer one rock may be than its ore's listed share, 0 to 1.
+## At 0.25 a 30%-hematite rock rolls somewhere between 22% and 38%, so two tiles
+## of the same ore are never quite the same. Vein-scale richness comes later.
+@export var vein_richness_variation: float = 0.25
 
 
 ## item id -> icon picture, built once at startup (see item_icons.gd).
@@ -108,14 +127,17 @@ func mine_tile(grid_pos: Vector2i) -> void:
 	if not bool(data.get_custom_data("minable")):
 		return
 
-	var drop_id: String = str(data.get_custom_data("drop_item_id"))
+	# What KIND of rock this is. It names a row in material_table.gd rather than
+	# an item you carry: mining copper ore gives you malachite mixed with
+	# regolith, not a lump of copper.
+	var rock_id: String = str(data.get_custom_data("drop_item_id"))
 
 	# Grab the tile's picture BEFORE erasing it; once it's gone we can't read it.
 	var drop_texture: Texture2D = _tile_texture(grid_pos)
 
 	tile_map.erase_cell(grid_pos)
 	if drops_enabled:
-		_spawn_drop(grid_pos, drop_id, drop_texture)
+		_spawn_gravel(grid_pos, rock_id, drop_texture)
 
 
 ## Cuts the tile's picture out of the TileSet's big image (the "atlas"), so the
@@ -133,30 +155,52 @@ func _tile_texture(grid_pos: Vector2i) -> Texture2D:
 	return tex
 
 
-## Called when a tile is mined: makes its drop at the cell, nudged randomly.
-func _spawn_drop(grid_pos: Vector2i, item_id: String, texture: Texture2D) -> void:
-	# Start at the cell centre, then jiggle by a random amount on each axis.
-	var pos: Vector2 = grid_to_world(grid_pos) + Vector2(
-		randf_range(-drop_spread, drop_spread),
-		randf_range(-drop_spread, drop_spread))
-	spawn_drop(pos, item_id, texture)
+## Called when a tile is mined: breaks one rock's worth of gravel into a few
+## pebbles and scatters them around the cell.
+##
+## Every pebble carries the SAME mixture, just a share of the amount, so which
+## pebble you happen to catch never changes what you end up with. The richness
+## roll happens ONCE per rock, not once per pebble, so a rich tile is rich in
+## all of its pieces.
+func _spawn_gravel(grid_pos: Vector2i, rock_id: String, texture: Texture2D) -> void:
+	if rock_id == "":
+		return  # this tile breaks into nothing
+
+	var count: int = maxi(pebbles_per_tile, 1)
+	var rock: Dictionary = MaterialTable.sample_gravel(rock_id, gravel_per_tile, vein_richness_variation)
+
+	for i in count:
+		var pebble := {}
+		for material_id in rock:
+			pebble[material_id] = rock[material_id] / count
+
+		# Start at the cell centre, then jiggle by a random amount on each axis.
+		var pos: Vector2 = grid_to_world(grid_pos) + Vector2(
+			randf_range(-drop_spread, drop_spread),
+			randf_range(-drop_spread, drop_spread))
+		spawn_drop(pos, "", texture, Vector2.ZERO, 0.0, pebble)
 
 
-## Creates one drop in the world. Used both for mined tiles (above) and for items
-## the player throws.
+## Creates one drop in the world. Used both for mined gravel (above) and for
+## items the player throws.
 ##   world_pos     - where it appears (pixels)
+##   item_id       - a whole item, for a thrown tool. Leave "" for gravel.
 ##   velocity      - starting speed in px/s; zero = just falls
 ##   pickup_delay  - seconds before it can be picked up or magnetised
+##   gravel        - { material id : units } for a pebble of mined rock; {} for
+##                   a whole item. This is what decides which of the two it is.
 func spawn_drop(world_pos: Vector2, item_id: String, texture: Texture2D,
-		velocity: Vector2 = Vector2.ZERO, pickup_delay: float = 0.0) -> void:
-	if item_id == "":
-		return  # this tile doesn't drop anything
+		velocity: Vector2 = Vector2.ZERO, pickup_delay: float = 0.0,
+		gravel: Dictionary = {}) -> void:
+	if item_id == "" and gravel.is_empty():
+		return  # nothing to drop
 
 	var drop = DROPPED_ITEM_SCENE.instantiate()
 	drop.item_id = item_id
-	# Set these BEFORE add_child: the drop reads its texture in its own _ready(),
-	# which runs the moment it enters the scene.
+	# Set these BEFORE add_child: the drop reads its texture and its gravel in
+	# its own _ready(), which runs the moment it enters the scene.
 	drop.texture = texture
+	drop.gravel = gravel
 	drop.velocity = velocity
 	drop.pickup_delay = pickup_delay
 	add_child(drop)

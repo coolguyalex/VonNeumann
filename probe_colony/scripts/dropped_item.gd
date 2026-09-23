@@ -1,6 +1,12 @@
 extends Area2D
 ## DroppedItem: the small copy of a tile that pops out when you mine it.
 ##
+## A drop is one of TWO things, and `gravel` is what tells them apart:
+##   gravel is EMPTY - a whole item, like a tool you threw. Goes to a hotbar slot.
+##   gravel is FILLED - a pebble of mined rock, carrying a mixture of materials
+##                      ({ "hematite": 2.1, "regolith": 4.9 }). Goes to the hold.
+## Everything else below -- falling, hopping, the magnet -- treats them the same.
+##
 ## It has no real physics. Every tick it:
 ##   1. gets pulled toward the player IF the player's magnet is switched on
 ##      (and there is room in the inventory),
@@ -15,6 +21,10 @@ extends Area2D
 @export var item_id: String = ""
 ## Set by the world when spawned: a small piece of the mined tile's own image.
 var texture: Texture2D = null
+
+## What this pebble is made of ({ material id : units }), or {} if this drop is
+## a whole item instead. The world fills it in (see world.mine_tile).
+var gravel: Dictionary = {}
 
 ## Fake physics: falls under gravity and lands on the first solid tile below.
 ## (Named fall_gravity because Area2D already has a built-in "gravity".)
@@ -46,6 +56,9 @@ var velocity: Vector2 = Vector2.ZERO
 # Seconds left before this drop can be picked up or pulled by the magnet.
 # Set by the world for thrown items so they don't snap straight back to you.
 var pickup_delay: float = 0.0
+# How much gravel this pebble started with, so a pebble that was only partly
+# swallowed by a full hold can be drawn smaller (see _shrink_to_remaining).
+var _full_units: float = 0.0
 # True while resting on a tile. Decides whether the hop timer counts down.
 var _grounded: bool = false
 # Seconds left until the next hop.
@@ -63,6 +76,7 @@ func _ready() -> void:
 	_player = get_tree().get_first_node_in_group("player")
 	_sprite.texture = texture
 	_sprite.scale = Vector2.ONE * drop_scale
+	_full_units = _gravel_units()
 	_reset_hop_timer()
 
 func _physics_process(delta: float) -> void:
@@ -94,9 +108,9 @@ func _apply_magnet(delta: float) -> void:
 	# The magnet only works while the player is holding it active.
 	if not _player.magnet_active:
 		return
-	# If the inventory is full the item couldn't be picked up anyway, so don't
-	# drag it to the player just to have it sit there.
-	if not _player.inventory.has_room():
+	# If there is nowhere to put this drop it couldn't be picked up anyway, so
+	# don't drag it to the player just to have it sit there.
+	if not _has_room_for_me():
 		return
 
 	var to_player: Vector2 = _player.global_position - global_position
@@ -188,8 +202,46 @@ func _reset_hop_timer() -> void:
 func _try_pickup() -> void:
 	if _player == null or not pickup_enabled or pickup_delay > 0.0:
 		return
-	if _player in get_overlapping_bodies():
-		# add_item returns false when the inventory is full; then the drop stays
-		# in the world instead of vanishing.
+	if not (_player in get_overlapping_bodies()):
+		return
+
+	if gravel.is_empty():
+		# A whole item: add_item returns false when the hotbar is full, and then
+		# the drop stays in the world instead of vanishing.
 		if _player.add_item(item_id):
 			queue_free()
+		return
+
+	# A pebble: the hold takes what it has room for and hands back the rest. A
+	# hold with a little space left swallows part of the pebble, so the leftover
+	# stays lying there as a smaller piece rather than all or nothing.
+	gravel = _player.add_gravel(gravel)
+	if gravel.is_empty():
+		queue_free()
+	else:
+		_shrink_to_remaining()
+
+
+## Units of gravel this drop is carrying (0.0 for a whole item).
+func _gravel_units() -> float:
+	var sum := 0.0
+	for material_id in gravel:
+		sum += gravel[material_id]
+	return sum
+
+
+# Is there anywhere for this drop to go? Whole items need a free hotbar slot,
+# pebbles need room in the hold.
+func _has_room_for_me() -> bool:
+	if gravel.is_empty():
+		return _player.inventory.has_room()
+	return _player.cargo.has_room()
+
+
+# Redraws a partly-collected pebble smaller. Area (not width) tracks how much
+# is left, hence the square root, and it never shrinks away to nothing.
+func _shrink_to_remaining() -> void:
+	if _full_units <= 0.0:
+		return
+	var fraction: float = clampf(_gravel_units() / _full_units, 0.0, 1.0)
+	_sprite.scale = Vector2.ONE * drop_scale * maxf(sqrt(fraction), 0.4)
